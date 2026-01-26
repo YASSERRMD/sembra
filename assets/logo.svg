@@ -1,0 +1,37 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a365d"/>
+      <stop offset="100%" style="stop-color:#0d9488"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="200" height="200" fill="white"/>
+  
+  <!-- Brain/Network Icon -->
+  <circle cx="100" cy="70" r="40" fill="url(#grad)" opacity="0.9"/>
+  
+  <!-- Neural connections -->
+  <circle cx="75" cy="55" r="8" fill="white" opacity="0.8"/>
+  <circle cx="100" cy="50" r="8" fill="white" opacity="0.8"/>
+  <circle cx="125" cy="55" r="8" fill="white" opacity="0.8"/>
+  <circle cx="85" cy="80" r="8" fill="white" opacity="0.8"/>
+  <circle cx="115" cy="80" r="8" fill="white" opacity="0.8"/>
+  
+  <!-- Lines connecting nodes -->
+  <line x1="75" y1="55" x2="100" y2="50" stroke="white" stroke-width="2" opacity="0.6"/>
+  <line x1="100" y1="50" x2="125" y2="55" stroke="white" stroke-width="2" opacity="0.6"/>
+  <line x1="75" y1="55" x2="85" y2="80" stroke="white" stroke-width="2" opacity="0.6"/>
+  <line x1="125" y1="55" x2="115" y2="80" stroke="white" stroke-width="2" opacity="0.6"/>
+  <line x1="85" y1="80" x2="115" y2="80" stroke="white" stroke-width="2" opacity="0.6"/>
+  <line x1="100" y1="50" x2="85" y2="80" stroke="white" stroke-width="2" opacity="0.6"/>
+  <line x1="100" y1="50" x2="115" y2="80" stroke="white" stroke-width="2" opacity="0.6"/>
+  
+  <!-- Search magnifier -->
+  <circle cx="130" cy="95" r="15" fill="none" stroke="url(#grad)" stroke-width="4"/>
+  <line x1="140" y1="105" x2="155" y2="120" stroke="url(#grad)" stroke-width="4" stroke-linecap="round"/>
+  
+  <!-- Text -->
+  <text x="100" y="160" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="url(#grad)">SEMBRA</text>
+</svg>

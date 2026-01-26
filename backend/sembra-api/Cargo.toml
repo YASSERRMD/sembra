@@ -3,17 +3,52 @@ name = "sembra-api"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "sembra-api"
+path = "src/main.rs"
+
 [dependencies]
 sembra-core = { path = "../sembra-core" }
 sembra-cache = { path = "../sembra-cache" }
+sembra-storage = { path = "../sembra-storage" }
+sembra-graph = { path = "../sembra-graph" }
+
+# Web framework
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Async runtime
 tokio = { version = "1", features = ["full"] }
-anyhow = "1"
+
+# Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 [[test]]
 name = "integration_day1"
 path = "../tests/integration_day1.rs"
+
+[[test]]
+name = "integration_day2"
+path = "../tests/integration_day2.rs"
+
+[[test]]
+name = "integration_day3"
+path = "../tests/integration_day3.rs"
+
+[[test]]
+name = "integration_day5"
+path = "../tests/integration_day5.rs"
