@@ -32,6 +32,7 @@ thiserror = "1"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sembra-types = { version = "0.1.0", path = "../sembra-types" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

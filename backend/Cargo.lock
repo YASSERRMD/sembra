@@ -1916,6 +1916,7 @@ dependencies = [
  "sembra-core",
  "sembra-graph",
  "sembra-storage",
+ "sembra-types",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -1939,6 +1940,7 @@ name = "sembra-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "sembra-types",
  "serde",
  "serde_json",
  "tokio",
@@ -1950,9 +1952,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "reqwest 0.13.1",
  "serde",
  "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
  "tokio",
 ]
 
@@ -1973,6 +1976,10 @@ dependencies = [
 [[package]]
 name = "sembra-types"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "serde"

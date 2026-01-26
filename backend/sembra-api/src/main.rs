@@ -14,7 +14,7 @@ use tracing::info;
 
 // Re-export crates for use in handlers
 use sembra_storage::BarqDB;
-use sembra_graph::BarqGraphDB;
+use sembra_graph::GraphDB;
 use sembra_cache::CelrixCache;
 use sembra_types::{HealthResponse, RetrieveRequest, RetrieveResponse, RetrieveResult};
 
@@ -22,13 +22,13 @@ use sembra_types::{HealthResponse, RetrieveRequest, RetrieveResponse, RetrieveRe
 pub struct AppState {
     pub cache: CelrixCache,
     pub barq_db: BarqDB,
-    pub barq_graph: BarqGraphDB,
+    pub graph_db: GraphDB,
 }
 
 /// Health check endpoint
 async fn health_handler(State(state): State<Arc<RwLock<AppState>>>) -> Json<HealthResponse> {
     // Check DB health
-    let db_health = state.read().await.barq_graph.health_check().await.unwrap_or(false);
+    let db_health = state.read().await.graph_db.health_check().await.unwrap_or(false);
     
     Json(HealthResponse {
         status: if db_health { "healthy".to_string() } else { "degraded".to_string() },
@@ -104,21 +104,21 @@ async fn main() -> anyhow::Result<()> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:password@localhost:5432/sembra".to_string());
     
-    let graph_url = std::env::var("BARQ_GRAPHDB_URL")
-        .unwrap_or_else(|_| "http://localhost:8081".to_string());
-
     // Initialize connections
-    info!("Connecting to BarqDB at {}", database_url);
+    info!("Connecting to BarqDB (Storage & Graph) at {}", database_url);
     let barq_db = BarqDB::connect(&database_url, 10).await?;
-    
-    info!("Connecting to BarqGraphDB at {}", graph_url);
-    let barq_graph = BarqGraphDB::new(&graph_url);
+    let graph_db = GraphDB::connect(&database_url, 10).await?;
+
+    info!("Initializing Graph Schema...");
+    if let Err(e) = graph_db.init_schema().await {
+        tracing::warn!("Graph schema init warning (might already exist): {}", e);
+    }
 
     // Create application state
     let state = Arc::new(RwLock::new(AppState {
         cache: CelrixCache::new(100_000, 86400),
         barq_db,
-        barq_graph,
+        graph_db,
     }));
 
     // Create router

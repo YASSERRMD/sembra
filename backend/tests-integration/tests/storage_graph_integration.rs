@@ -1,5 +1,5 @@
 use sembra_storage::{SearchResult, StoredChunk};
-use sembra_graph::{BarqGraphDB, GraphNode, GraphEdge};
+use sembra_graph::{GraphNode, GraphEdge};
 
 #[test]
 fn test_stored_chunk_serialization() {
@@ -32,9 +32,10 @@ fn test_search_result_serialization() {
 #[test]
 fn test_graph_node_creation() {
     let node = GraphNode {
-        id: "chunk:1".to_string(),
-        label: "Chunk".to_string(),
+        node_id: "chunk:1".to_string(),
+        node_type: "Chunk".to_string(),
         properties: serde_json::json!({"document_id": "doc:1"}),
+        created_at: 1234567890,
     };
     
     let json = serde_json::to_string(&node).unwrap();
@@ -45,10 +46,12 @@ fn test_graph_node_creation() {
 #[test]
 fn test_graph_edge_creation() {
     let edge = GraphEdge {
-        from_id: "chunk:1".to_string(),
-        to_id: "chunk:2".to_string(),
-        relation: "SIMILAR_TO".to_string(),
-        properties: Some(serde_json::json!({"similarity": 0.92})),
+        edge_id: "edge:1".to_string(),
+        source_id: "chunk:1".to_string(),
+        target_id: "chunk:2".to_string(),
+        edge_type: "SIMILAR_TO".to_string(),
+        weight: 0.92,
+        properties: serde_json::json!({"similarity": 0.92}),
     };
     
     let json = serde_json::to_string(&edge).unwrap();
@@ -56,9 +59,5 @@ fn test_graph_edge_creation() {
     assert!(json.contains("0.92"));
 }
 
-#[test]
-fn test_barq_graphdb_client_creation() {
-    let _client = BarqGraphDB::new("http://localhost:8081");
-    // Just verifies construction doesn't panic
-    assert!(true);
-}
+// Client test removed as GraphDB requires a live DB connection
+
