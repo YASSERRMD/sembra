@@ -1,0 +1,21 @@
+FROM rust:latest as builder
+
+WORKDIR /app
+COPY backend /app
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/sembra-api /usr/local/bin/
+
+EXPOSE 3000
+
+CMD ["sembra-api"]

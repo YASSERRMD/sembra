@@ -1,0 +1,20 @@
+FROM rust:latest
+
+WORKDIR /app
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy backend code
+COPY backend /app/backend
+
+WORKDIR /app/backend
+
+# Build in release mode
+RUN cargo build --release
+
+# Default: run tests
+CMD ["cargo", "test", "--release"]
