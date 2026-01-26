@@ -36,7 +36,7 @@ async fn test_vector_search_latency() {
     // Test vector search latency
     let start = Instant::now();
     let results = db
-        .vector_search(&vec![0.1; 768], 10)
+        .vector_search(vec![0.1; 768], 10)
         .await
         .expect("Search");
     let latency_ms = start.elapsed().as_millis();
@@ -64,7 +64,7 @@ async fn test_hybrid_search() {
     // Test hybrid search
     let start = Instant::now();
     let results = db
-        .hybrid_search("sample text", &vec![0.1; 768], 10)
+        .hybrid_search(vec![0.1; 768], "sample text", 10, 60.0)
         .await
         .expect("Hybrid search");
     let latency_ms = start.elapsed().as_millis();
