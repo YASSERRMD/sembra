@@ -1,0 +1,19 @@
+[package]
+name = "sembra-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sembra-core = { path = "../sembra-core" }
+sembra-cache = { path = "../sembra-cache" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[[test]]
+name = "integration_day1"
+path = "../tests/integration_day1.rs"
