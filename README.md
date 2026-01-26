@@ -39,29 +39,33 @@ SEMBRA is a high-performance document retrieval system that integrates with [Bar
 
 ### Prerequisites
 
-- Rust 1.75+
 - Docker & Docker Compose
 
-### Start Services
+### Run Everything
 
 ```bash
 cd docker
-docker-compose up -d barq-db barq-graphdb aimesh redis
+docker-compose up -d
 ```
 
-### Build & Run
+This starts all services:
+- **Barq-DB** on port 8080
+- **Barq-GraphDB** on port 8081
+- **AiMesh** on port 9000
+- **Redis** on port 6379
+- **SEMBRA API** on port 3000
+
+### Test the API
+
+```bash
+curl http://localhost:3000/health
+```
+
+### Development Build (Optional)
 
 ```bash
 cd backend
 cargo build --release
-cargo run -p sembra-api
-```
-
-Server starts at http://localhost:3000
-
-### Test
-
-```bash
 cargo test
 ```
 
