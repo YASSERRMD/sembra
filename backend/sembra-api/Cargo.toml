@@ -22,3 +22,7 @@ path = "../tests/integration_day1.rs"
 [[test]]
 name = "integration_day2"
 path = "../tests/integration_day2.rs"
+
+[[test]]
+name = "integration_day3"
+path = "../tests/integration_day3.rs"
