@@ -1,12 +1,12 @@
 version: '3.9'
 services:
+  # Postgres for Auth, Config, Tenants
   postgres:
     image: pgvector/pgvector:pg15
     environment:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: sembra
     volumes:
-      - ./postgres-init.sql:/docker-entrypoint-initdb.d/init.sql
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
@@ -16,40 +16,103 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
+  # BarqDB for Vector Storage
+  barq-db:
+    image: yasserrmd/barq-db:latest
     ports:
-      - "6379:6379"
+      - "8080:8080"
+    volumes:
+      - barq_db_data:/data
+    # Simplified healthcheck - just check if port is open
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD-SHELL", "nc -z localhost 8080 || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # BarqGraphDB for Graph Storage
+  barq-graphdb:
+    image: yasserrmd/barq-graphdb:latest
+    ports:
+      - "8081:8081"
+      - "50052:50052"
+    volumes:
+      - barq_graphdb_data:/data
+    healthcheck:
+      test: [ "CMD-SHELL", "nc -z localhost 8081 || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # AiMesh Message Queue
+  aimesh:
+    image: yasserrmd/aimesh:latest
+    ports:
+      - "9000:9000"
+    depends_on:
+      barq-db:
+        condition: service_started
+      barq-graphdb:
+        condition: service_started
+    environment:
+      BARQ_DB_URL: http://barq-db:8080
+      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
+    healthcheck:
+      test: [ "CMD-SHELL", "nc -z localhost 9000 || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Celrix Cache
+  celrix:
+    image: yasserrmd/celrix:latest
+    ports:
+      - "6380:6380"
+    healthcheck:
+      test: [ "CMD-SHELL", "nc -z localhost 6380 || exit 1" ]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 5s
 
+  # SEMBRA API
   sembra-api:
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
-    ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: postgresql://postgres:password@postgres:5432/sembra
-      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      barq-db:
+        condition: service_started
+      barq-graphdb:
+        condition: service_started
+      celrix:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/sembra
+      BARQ_DB_URL: http://barq-db:8080
+      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
+      AIMESH_URL: http://aimesh:9000
+      CELRIX_URL: celrix:6380
+      JWT_SECRET: enterprise_secret_key_change_me
+    ports:
+      - "3000:3000"
 
+  # Frontend
   sembra-frontend:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
-    ports:
-      - "8080:80"
     depends_on:
       - sembra-api
+    ports:
+      - "80:80"
 
+  # Tests
   tests:
     build:
       context: ..
@@ -57,11 +120,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      barq-db:
+        condition: service_started
     environment:
       DATABASE_URL: postgresql://postgres:password@postgres:5432/sembra
-      REDIS_URL: redis://redis:6379
+      BARQ_DB_URL: http://barq-db:8080
+      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
+      AIMESH_URL: http://aimesh:9000
     volumes:
       - ../backend:/app/backend
       - test_cache:/app/target
@@ -69,4 +134,6 @@ services:
 
 volumes:
   postgres_data:
+  barq_db_data:
+  barq_graphdb_data:
   test_cache:

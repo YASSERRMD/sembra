@@ -1,178 +1,159 @@
-//! Barq-GraphDB - Graph storage layer for document relationships
+//! Barq-GraphDB Client - HTTP Client for Barq-GraphDB Hybrid Graph+Vector Database
+//!
+//! Connects to Barq-GraphDB REST API at http://localhost:8081
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::PgPoolOptions;
-use sqlx::{FromRow, PgPool, Row};
 
 /// A node in the graph
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
-    pub node_id: String,
-    pub node_type: String,
+    pub id: u64,
+    pub label: String,
     pub properties: serde_json::Value,
-    pub created_at: i64,
 }
 
 /// An edge between nodes
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphEdge {
-    pub edge_id: String,
-    pub source_id: String,
-    pub target_id: String,
+    pub source: u64,
+    pub target: u64,
     pub edge_type: String,
-    pub weight: f32,
-    pub properties: serde_json::Value,
+    pub weight: Option<f32>,
 }
 
-/// Barq-GraphDB - Graph database for document relationships
-pub struct GraphDB {
-    pool: PgPool,
+/// Hybrid query result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HybridResult {
+    pub id: u64,
+    pub score: f32,
+    pub path: Vec<u64>,
 }
 
-impl GraphDB {
-    /// Connect to PostgreSQL database
-    pub async fn connect(database_url: &str, pool_size: u32) -> Result<Self> {
-        let pool = PgPoolOptions::new()
-            .max_connections(pool_size)
-            .connect(database_url)
-            .await?;
+/// Barq-GraphDB Client - connects to Barq-GraphDB via REST API
+pub struct BarqGraphDBClient {
+    client: reqwest::Client,
+    base_url: String,
+}
 
-        Ok(Self { pool })
+impl BarqGraphDBClient {
+    /// Create a new Barq-GraphDB client
+    pub fn new(base_url: &str) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+        }
     }
 
-    /// Initialize graph tables
-    pub async fn init_schema(&self) -> Result<()> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS graph_nodes (
-                node_id VARCHAR(255) PRIMARY KEY,
-                node_type VARCHAR(100) NOT NULL,
-                properties JSONB,
-                created_at BIGINT NOT NULL
-            )"
-        )
-        .execute(&self.pool)
-        .await?;
-        
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS graph_edges (
-                edge_id VARCHAR(255) PRIMARY KEY,
-                source_id VARCHAR(255) NOT NULL REFERENCES graph_nodes(node_id) ON DELETE CASCADE,
-                target_id VARCHAR(255) NOT NULL REFERENCES graph_nodes(node_id) ON DELETE CASCADE,
-                edge_type VARCHAR(100) NOT NULL,
-                weight REAL DEFAULT 1.0,
-                properties JSONB
-            )"
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_source ON graph_edges(source_id)")
-            .execute(&self.pool).await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_target ON graph_edges(target_id)")
-            .execute(&self.pool).await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_type ON graph_edges(edge_type)")
-            .execute(&self.pool).await?;
-
-        Ok(())
+    /// Create from environment variable
+    pub fn from_env() -> Result<Self> {
+        let base_url = std::env::var("BARQ_GRAPHDB_URL")
+            .unwrap_or_else(|_| "http://localhost:8081".to_string());
+        Ok(Self::new(&base_url))
     }
 
     /// Add a node to the graph
-    pub async fn add_node(
-        &self,
-        node_id: &str,
-        node_type: &str,
-        properties: serde_json::Value,
-    ) -> Result<()> {
-        let created_at = chrono::Utc::now().timestamp_millis();
+    pub async fn add_node(&self, id: u64, label: &str, properties: serde_json::Value) -> Result<()> {
+        let url = format!("{}/nodes", self.base_url);
+        let body = serde_json::json!({
+            "id": id,
+            "label": label,
+            "properties": properties
+        });
 
-        sqlx::query(
-            r#"
-            INSERT INTO graph_nodes (node_id, node_type, properties, created_at)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT(node_id) DO UPDATE SET
-                node_type = EXCLUDED.node_type,
-                properties = EXCLUDED.properties
-            "#,
-        )
-        .bind(node_id)
-        .bind(node_type)
-        .bind(properties)
-        .bind(created_at)
-        .execute(&self.pool)
-        .await?;
-
+        let resp = self.client.post(&url).json(&body).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to add node: {} - {}", status, text);
+        }
         Ok(())
     }
 
-    /// Get a node by ID
-    pub async fn get_node(&self, node_id: &str) -> Result<Option<GraphNode>> {
-        let node = sqlx::query_as::<_, GraphNode>(
-            "SELECT node_id, node_type, properties, created_at FROM graph_nodes WHERE node_id = $1",
-        )
-        .bind(node_id)
-        .fetch_optional(&self.pool)
-        .await?;
+    /// Add an edge between nodes
+    pub async fn add_edge(&self, source: u64, target: u64, edge_type: &str) -> Result<()> {
+        let url = format!("{}/edges", self.base_url);
+        let body = serde_json::json!({
+            "source": source,
+            "target": target,
+            "edge_type": edge_type
+        });
 
-        Ok(node)
+        let resp = self.client.post(&url).json(&body).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to add edge: {} - {}", status, text);
+        }
+        Ok(())
     }
 
-    /// Create an edge between two nodes
-    pub async fn link_nodes(
-        &self,
-        source_id: &str,
-        target_id: &str,
-        edge_type: &str,
-        weight: f32,
-        properties: serde_json::Value,
-    ) -> Result<String> {
-        let edge_id = format!("{}->{}:{}", source_id, target_id, edge_type);
+    /// Set embedding for a node
+    pub async fn set_embedding(&self, id: u64, embedding: Vec<f32>) -> Result<()> {
+        let url = format!("{}/nodes/{}/embedding", self.base_url, id);
+        let body = serde_json::json!({
+            "embedding": embedding
+        });
 
-        sqlx::query(
-            r#"
-            INSERT INTO graph_edges (edge_id, source_id, target_id, edge_type, weight, properties)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT(edge_id) DO UPDATE SET
-                weight = EXCLUDED.weight,
-                properties = EXCLUDED.properties
-            "#,
-        )
-        .bind(&edge_id)
-        .bind(source_id)
-        .bind(target_id)
-        .bind(edge_type)
-        .bind(weight)
-        .bind(properties)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(edge_id)
+        let resp = self.client.put(&url).json(&body).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to set embedding: {} - {}", status, text);
+        }
+        Ok(())
     }
-    
+
     /// Get neighbors of a node
-    pub async fn get_neighbors(
-        &self,
-        node_id: &str,
-    ) -> Result<Vec<(String, f32)>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT target_id, weight FROM graph_edges 
-            WHERE source_id = $1
-            ORDER BY weight DESC
-            "#,
-        )
-        .bind(node_id)
-        .fetch_all(&self.pool)
-        .await?;
+    pub async fn get_neighbors(&self, id: u64) -> Result<Vec<u64>> {
+        let url = format!("{}/nodes/{}/neighbors", self.base_url, id);
+        let resp = self.client.get(&url).send().await?;
+        
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to get neighbors: {} - {}", status, text);
+        }
 
-        Ok(rows
-            .iter()
-            .map(|r| (r.get::<String, _>("target_id"), r.get::<f32, _>("weight")))
-            .collect())
+        let neighbors: Vec<u64> = resp.json().await?;
+        Ok(neighbors)
     }
 
-    pub async fn health_check(&self) -> Result<bool> {
-        sqlx::query("SELECT 1").execute(&self.pool).await?;
-        Ok(true)
+    /// Hybrid query combining vector similarity and graph distance
+    pub async fn hybrid_query(
+        &self,
+        embedding: Vec<f32>,
+        start_node: u64,
+        max_depth: usize,
+        top_k: usize,
+        vector_weight: f32,
+        graph_weight: f32,
+    ) -> Result<Vec<HybridResult>> {
+        let url = format!("{}/hybrid_query", self.base_url);
+        let body = serde_json::json!({
+            "embedding": embedding,
+            "start_node": start_node,
+            "max_depth": max_depth,
+            "top_k": top_k,
+            "vector_weight": vector_weight,
+            "graph_weight": graph_weight
+        });
+
+        let resp = self.client.post(&url).json(&body).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Hybrid query failed: {} - {}", status, text);
+        }
+
+        let results: Vec<HybridResult> = resp.json().await?;
+        Ok(results)
+    }
+
+    /// Health check
+    pub async fn health(&self) -> Result<bool> {
+        let url = format!("{}/health", self.base_url);
+        let resp = self.client.get(&url).send().await?;
+        Ok(resp.status().is_success())
     }
 }
