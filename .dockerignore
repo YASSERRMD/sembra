@@ -1,0 +1,9 @@
+backend/target
+frontend/node_modules
+frontend/dist
+.git
+.idea
+.vscode
+target
+**/target
+**/node_modules

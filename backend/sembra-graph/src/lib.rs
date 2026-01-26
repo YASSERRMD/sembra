@@ -44,30 +44,35 @@ impl GraphDB {
     /// Initialize graph tables
     pub async fn init_schema(&self) -> Result<()> {
         sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS graph_nodes (
+            "CREATE TABLE IF NOT EXISTS graph_nodes (
                 node_id VARCHAR(255) PRIMARY KEY,
                 node_type VARCHAR(100) NOT NULL,
                 properties JSONB,
                 created_at BIGINT NOT NULL
-            );
-            
-            CREATE TABLE IF NOT EXISTS graph_edges (
+            )"
+        )
+        .execute(&self.pool)
+        .await?;
+        
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS graph_edges (
                 edge_id VARCHAR(255) PRIMARY KEY,
                 source_id VARCHAR(255) NOT NULL REFERENCES graph_nodes(node_id) ON DELETE CASCADE,
                 target_id VARCHAR(255) NOT NULL REFERENCES graph_nodes(node_id) ON DELETE CASCADE,
                 edge_type VARCHAR(100) NOT NULL,
                 weight REAL DEFAULT 1.0,
                 properties JSONB
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_edges_source ON graph_edges(source_id);
-            CREATE INDEX IF NOT EXISTS idx_edges_target ON graph_edges(target_id);
-            CREATE INDEX IF NOT EXISTS idx_edges_type ON graph_edges(edge_type);
-            "#,
+            )"
         )
         .execute(&self.pool)
         .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_source ON graph_edges(source_id)")
+            .execute(&self.pool).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_target ON graph_edges(target_id)")
+            .execute(&self.pool).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_type ON graph_edges(edge_type)")
+            .execute(&self.pool).await?;
 
         Ok(())
     }
