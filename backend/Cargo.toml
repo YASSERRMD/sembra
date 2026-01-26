@@ -6,6 +6,7 @@ members = [
     "sembra-storage",
     "sembra-graph",
     "sembra-cache",
+    "tests-integration",
 ]
 resolver = "2"
 
