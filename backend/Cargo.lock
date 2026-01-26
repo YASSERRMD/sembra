@@ -1939,7 +1939,6 @@ name = "sembra-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "sembra-types",
  "serde",
  "serde_json",
  "tokio",
@@ -1974,10 +1973,6 @@ dependencies = [
 [[package]]
 name = "sembra-types"
 version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "serde"
