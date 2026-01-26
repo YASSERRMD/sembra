@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
+use rand::Rng;
+use uuid::Uuid;
 
 // Re-export crates for use in handlers
 use sembra_storage::BarqDB;
@@ -25,6 +27,43 @@ pub struct AppState {
     pub graph_db: GraphDB,
 }
 
+#[derive(Deserialize)]
+pub struct IngestRequest {
+    pub text: String,
+    pub document_id: String,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+pub struct IngestResponse {
+    pub chunk_count: usize,
+    pub document_id: String,
+}
+
+#[derive(Serialize)]
+pub struct StatusResponse {
+    pub total_chunks: i64,
+    pub components: ComponentStatus,
+}
+
+#[derive(Serialize)]
+pub struct ComponentStatus {
+    pub database: String,
+    pub cache: String,
+}
+
+#[derive(Serialize)]
+pub struct ConfigResponse {
+    pub embedding_provider: String,
+    pub vector_dim: usize,
+}
+
+/// Helper to generate mock embedding
+fn generate_mock_embedding() -> Vec<f32> {
+    let mut rng = rand::thread_rng();
+    (0..768).map(|_| rng.gen::<f32>()).collect()
+}
+
 /// Health check endpoint
 async fn health_handler(State(state): State<Arc<RwLock<AppState>>>) -> Json<HealthResponse> {
     // Check DB health
@@ -37,6 +76,67 @@ async fn health_handler(State(state): State<Arc<RwLock<AppState>>>) -> Json<Heal
     })
 }
 
+/// System Status endpoint
+async fn status_handler(State(state): State<Arc<RwLock<AppState>>>) -> Json<StatusResponse> {
+    let state = state.read().await;
+    let count = state.barq_db.chunk_count().await.unwrap_or(-1);
+    let db_health = state.graph_db.health_check().await.unwrap_or(false);
+
+    Json(StatusResponse {
+        total_chunks: count,
+        components: ComponentStatus {
+            database: if db_health { "Connected".into() } else { "Disconnected".into() },
+            cache: "In-Memory (Moka)".into(),
+        },
+    })
+}
+
+/// Config endpoint
+async fn config_handler() -> Json<ConfigResponse> {
+    Json(ConfigResponse {
+        embedding_provider: "Mock (Random)".into(),
+        vector_dim: 768,
+    })
+}
+
+/// Ingest endpoint - Chunk and Store
+async fn ingest_handler(
+    State(state): State<Arc<RwLock<AppState>>>,
+    Json(request): Json<IngestRequest>,
+) -> Result<Json<IngestResponse>, StatusCode> {
+    let state = state.read().await;
+    
+    // Simple splitting by newline for now
+    let chunks: Vec<&str> = request.text.split('\n').filter(|s| !s.trim().is_empty()).collect();
+    let mut count = 0;
+
+    for chunk_text in chunks {
+        let chunk_id = format!("{}:{}", request.document_id, Uuid::new_v4());
+        let embedding = generate_mock_embedding();
+        
+        // Store in BarqDB
+        state.barq_db.insert_chunk(
+            &chunk_id,
+            &request.document_id,
+            chunk_text,
+            embedding,
+            request.metadata.clone().unwrap_or(serde_json::json!({})),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to insert chunk: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+        count += 1;
+    }
+
+    Ok(Json(IngestResponse {
+        chunk_count: count,
+        document_id: request.document_id,
+    }))
+}
+
 /// Retrieve endpoint - search for relevant chunks
 async fn retrieve_handler(
     State(state): State<Arc<RwLock<AppState>>>,
@@ -46,14 +146,9 @@ async fn retrieve_handler(
     let top_k = request.top_k.unwrap_or(10);
     let state = state.read().await;
 
-    // 1. Check cache for query embedding (Simulated for this request scope, 
-    //    normally would check cache for query string -> embedding mapping)
-    
-    // 2. Perform Hybrid Search via BarqDB
-    // If request has no embedding, we would generate it here. 
-    // For now we expect client/ingress to provide it or use mock.
+    // Generate mock embedding if missing (Simulation)
     let embedding = if request.query_embedding.is_empty() {
-        vec![0.0; 768] // Dimensionality placeholder
+        generate_mock_embedding()
     } else {
         request.query_embedding
     };
@@ -85,8 +180,12 @@ async fn retrieve_handler(
 pub fn create_router(state: Arc<RwLock<AppState>>) -> Router {
     Router::new()
         .route("/health", get(health_handler))
+        .route("/v1/status", get(status_handler)) // New
+        .route("/v1/config", get(config_handler)) // New
+        .route("/v1/ingest", post(ingest_handler)) // New
         .route("/v1/retrieve", post(retrieve_handler))
         .with_state(state)
+        .layer(tower_http::cors::CorsLayer::permissive()) // Add CORS for ease
 }
 
 #[tokio::main]
