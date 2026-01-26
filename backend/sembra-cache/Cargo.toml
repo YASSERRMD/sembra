@@ -1,6 +1,11 @@
 [package]
 name = "sembra-cache"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+moka = { version = "0.12", features = ["future"] }
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
