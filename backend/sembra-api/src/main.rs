@@ -16,44 +16,13 @@ use tracing::info;
 use sembra_storage::BarqDB;
 use sembra_graph::BarqGraphDB;
 use sembra_cache::CelrixCache;
+use sembra_types::{HealthResponse, RetrieveRequest, RetrieveResponse, RetrieveResult};
 
 /// Application state shared across handlers
 pub struct AppState {
     pub cache: CelrixCache,
     pub barq_db: BarqDB,
     pub barq_graph: BarqGraphDB,
-}
-
-/// Health check response
-#[derive(Serialize)]
-pub struct HealthResponse {
-    pub status: String,
-    pub version: String,
-    pub uptime_secs: u64,
-}
-
-/// Retrieve request body
-#[derive(Deserialize)]
-pub struct RetrieveRequest {
-    pub query: String,
-    pub top_k: Option<i32>,
-    #[serde(default)]
-    pub query_embedding: Vec<f32>,
-}
-
-/// Retrieve response
-#[derive(Serialize)]
-pub struct RetrieveResponse {
-    pub results: Vec<RetrieveResult>,
-    pub latency_ms: u64,
-}
-
-#[derive(Serialize)]
-pub struct RetrieveResult {
-    pub chunk_id: String,
-    pub score: f32,
-    pub text: String,
-    pub document_id: String,
 }
 
 /// Health check endpoint

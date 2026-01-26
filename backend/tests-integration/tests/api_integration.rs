@@ -1,5 +1,5 @@
-use sembra_api::{RetrieveRequest, RetrieveResponse};
-use reqwest::{Client, StatusCode};
+use sembra_types::{RetrieveRequest, RetrieveResponse};
+// use reqwest::{Client, StatusCode};
 
 #[tokio::test]
 async fn test_api_types() {
@@ -28,7 +28,7 @@ async fn test_retrieve_response_format() {
 // For now we test data structures and client interactions
 #[test]
 fn test_health_response_format() {
-    use sembra_api::HealthResponse;
+    use sembra_types::HealthResponse;
     let resp = HealthResponse {
         status: "healthy".to_string(),
         version: "0.1.0".to_string(),

@@ -12,3 +12,4 @@ sembra-core = { path = "../sembra-core" }
 sembra-cache = { path = "../sembra-cache" }
 sembra-storage = { path = "../sembra-storage" }
 sembra-graph = { path = "../sembra-graph" }
+reqwest = { version = "0.13.1", features = ["json"] }
