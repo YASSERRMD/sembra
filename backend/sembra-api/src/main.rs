@@ -12,6 +12,8 @@ mod handlers;
 mod providers;
 mod state;
 mod services;
+mod extractors;
+mod chunking;
 
 use state::AppState;
 use services::auth::AuthService;

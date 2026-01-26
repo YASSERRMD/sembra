@@ -110,7 +110,7 @@ services:
     depends_on:
       - sembra-api
     ports:
-      - "80:80"
+      - "8888:80"
 
   # Tests
   tests:

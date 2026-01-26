@@ -15,7 +15,7 @@ sembra-graph = { path = "../sembra-graph" }
 sembra-types = { path = "../sembra-types" }
 
 # Web framework
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
@@ -46,6 +46,13 @@ jsonwebtoken = "9"
 argon2 = { version = "0.5", features = ["std"] }
 chrono = "0.4"
 axum-extra = { version = "0.9", features = ["cookie", "typed-header"] }
+
+# File Upload & Extraction
+multer = "3"
+pdf-extract = "0.7"
+docx-rs = "0.4"
+futures = "0.3"
+bytes = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
