@@ -16,6 +16,15 @@ pub struct StoredChunk {
     pub created_at: Option<i64>,
 }
 
+/// Search result with score
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub chunk_id: String,
+    pub document_id: String,
+    pub text: String,
+    pub score: f32,
+}
+
 /// Barq-DB - High-performance PostgreSQL storage with pgvector
 pub struct BarqDB {
     pool: PgPool,
@@ -105,41 +114,44 @@ impl BarqDB {
     /// Vector similarity search using pgvector cosine distance
     pub async fn vector_search(
         &self,
-        query_embedding: &[f32],
-        top_k: usize,
-    ) -> Result<Vec<(String, f32)>> {
-        let embedding_vec = Vector::from(query_embedding.to_vec());
-        
+        query_embedding: Vec<f32>,
+        limit: i32,
+    ) -> Result<Vec<SearchResult>> {
+        let query_vec = Vector::from(query_embedding);
+
         let rows = sqlx::query(
             r#"
-            SELECT chunk_id, 1 - (embedding <=> $1) as score
+            SELECT chunk_id, document_id, text, metadata,
+                   1 - (embedding <=> $1) as score
             FROM sembra_chunks
-            WHERE embedding IS NOT NULL
             ORDER BY embedding <=> $1
             LIMIT $2
             "#,
         )
-        .bind(&embedding_vec)
-        .bind(top_k as i32)
+        .bind(&query_vec)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
+        let results = rows
             .iter()
-            .map(|r| (r.get::<String, _>("chunk_id"), r.get::<f32, _>("score")))
-            .collect())
+            .map(|row| SearchResult {
+                chunk_id: row.get("chunk_id"),
+                document_id: row.get("document_id"),
+                text: row.get("text"),
+                score: row.get("score"),
+            })
+            .collect();
+
+        Ok(results)
     }
 
-    /// BM25 full-text search using PostgreSQL's built-in text search
-    pub async fn bm25_search(
-        &self,
-        query: &str,
-        top_k: usize,
-    ) -> Result<Vec<(String, f32)>> {
+    /// BM25 text search using PostgreSQL full-text search
+    pub async fn bm25_search(&self, query: &str, limit: i32) -> Result<Vec<SearchResult>> {
         let rows = sqlx::query(
             r#"
-            SELECT chunk_id, 
-                   ts_rank_cd(to_tsvector('english', text), plainto_tsquery('english', $1)) as score
+            SELECT chunk_id, document_id, text, metadata,
+                   ts_rank(to_tsvector('english', text), plainto_tsquery('english', $1)) as score
             FROM sembra_chunks
             WHERE to_tsvector('english', text) @@ plainto_tsquery('english', $1)
             ORDER BY score DESC
@@ -147,47 +159,68 @@ impl BarqDB {
             "#,
         )
         .bind(query)
-        .bind(top_k as i32)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
+        let results = rows
             .iter()
-            .map(|r| (r.get::<String, _>("chunk_id"), r.get::<f32, _>("score")))
-            .collect())
+            .map(|row| SearchResult {
+                chunk_id: row.get("chunk_id"),
+                document_id: row.get("document_id"),
+                text: row.get("text"),
+                score: row.get("score"),
+            })
+            .collect();
+
+        Ok(results)
     }
 
-    /// Hybrid search combining vector and BM25 with Reciprocal Rank Fusion (RRF)
+    /// Hybrid search combining vector and BM25 with RRF fusion
     pub async fn hybrid_search(
         &self,
-        query: &str,
-        query_embedding: &[f32],
-        top_k: usize,
-    ) -> Result<Vec<(String, f32)>> {
+        query_embedding: Vec<f32>,
+        query_text: &str,
+        limit: i32,
+        k: f32,
+    ) -> Result<Vec<SearchResult>> {
         // Get results from both search methods
-        let bm25_results = self.bm25_search(query, 100).await?;
-        let vector_results = self.vector_search(query_embedding, 100).await?;
+        let vector_results = self.vector_search(query_embedding, limit * 2).await?;
+        let bm25_results = self.bm25_search(query_text, limit * 2).await?;
 
-        // RRF Fusion with k=60 (standard constant)
-        let mut fused: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
-        
-        // Weight for BM25 results
-        for (rank, (chunk_id, _)) in bm25_results.iter().enumerate() {
-            let rrf_score = 1.0 / (60.0 + rank as f32) * 0.5;
-            *fused.entry(chunk_id.clone()).or_insert(0.0) += rrf_score;
-        }
-        
-        // Weight for vector results
-        for (rank, (chunk_id, _)) in vector_results.iter().enumerate() {
-            let rrf_score = 1.0 / (60.0 + rank as f32) * 0.5;
-            *fused.entry(chunk_id.clone()).or_insert(0.0) += rrf_score;
+        // RRF fusion: score = sum(1 / (k + rank))
+        let mut scores: std::collections::HashMap<String, (f32, SearchResult)> =
+            std::collections::HashMap::new();
+
+        for (rank, result) in vector_results.into_iter().enumerate() {
+            let rrf_score = 1.0 / (k + rank as f32 + 1.0);
+            let chunk_id = result.chunk_id.clone();
+            scores
+                .entry(chunk_id)
+                .or_insert((0.0, result))
+                .0 += rrf_score;
         }
 
-        // Sort by fused score
-        let mut sorted: Vec<_> = fused.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        for (rank, result) in bm25_results.into_iter().enumerate() {
+            let rrf_score = 1.0 / (k + rank as f32 + 1.0);
+            scores
+                .entry(result.chunk_id.clone())
+                .and_modify(|(score, _)| *score += rrf_score)
+                .or_insert((rrf_score, result));
+        }
 
-        Ok(sorted.into_iter().take(top_k).collect())
+        let mut results: Vec<SearchResult> = scores
+            .into_iter()
+            .map(|(_, (score, mut result))| {
+                result.score = score;
+                result
+            })
+            .collect();
+
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        results.truncate(limit as usize);
+
+        Ok(results)
     }
 }
 

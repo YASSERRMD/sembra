@@ -1,207 +1,137 @@
-//! Barq-GraphDB - Graph storage layer for document relationships
+//! Barq-GraphDB Client - HTTP client for graph database operations
 
 use anyhow::Result;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::PgPoolOptions;
-use sqlx::{FromRow, PgPool, Row};
 
-/// A node in the graph
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+/// Graph node representation
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
-    pub node_id: String,
-    pub node_type: String,
+    pub id: String,
+    pub label: String,
     pub properties: serde_json::Value,
-    pub created_at: i64,
 }
 
-/// An edge between nodes
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+/// Graph edge representation
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphEdge {
-    pub edge_id: String,
-    pub source_id: String,
-    pub target_id: String,
-    pub edge_type: String,
-    pub weight: f32,
-    pub properties: serde_json::Value,
+    pub from_id: String,
+    pub to_id: String,
+    pub relation: String,
+    pub properties: Option<serde_json::Value>,
 }
 
-/// Barq-GraphDB - Graph database for document relationships
-pub struct GraphDB {
-    pool: PgPool,
+/// Barq-GraphDB HTTP client
+pub struct BarqGraphDB {
+    client: Client,
+    base_url: String,
 }
 
-impl GraphDB {
-    /// Connect to PostgreSQL database
-    pub async fn connect(database_url: &str, pool_size: u32) -> Result<Self> {
-        let pool = PgPoolOptions::new()
-            .max_connections(pool_size)
-            .connect(database_url)
-            .await?;
-
-        Ok(Self { pool })
-    }
-
-    /// Initialize graph tables
-    pub async fn init_schema(&self) -> Result<()> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS graph_nodes (
-                node_id VARCHAR(255) PRIMARY KEY,
-                node_type VARCHAR(100) NOT NULL,
-                properties JSONB,
-                created_at BIGINT NOT NULL
-            );
-            
-            CREATE TABLE IF NOT EXISTS graph_edges (
-                edge_id VARCHAR(255) PRIMARY KEY,
-                source_id VARCHAR(255) NOT NULL REFERENCES graph_nodes(node_id) ON DELETE CASCADE,
-                target_id VARCHAR(255) NOT NULL REFERENCES graph_nodes(node_id) ON DELETE CASCADE,
-                edge_type VARCHAR(100) NOT NULL,
-                weight REAL DEFAULT 1.0,
-                properties JSONB
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_edges_source ON graph_edges(source_id);
-            CREATE INDEX IF NOT EXISTS idx_edges_target ON graph_edges(target_id);
-            CREATE INDEX IF NOT EXISTS idx_edges_type ON graph_edges(edge_type);
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+impl BarqGraphDB {
+    /// Create a new GraphDB client
+    pub fn new(base_url: &str) -> Self {
+        Self {
+            client: Client::new(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+        }
     }
 
     /// Add a node to the graph
-    pub async fn add_node(
-        &self,
-        node_id: &str,
-        node_type: &str,
-        properties: serde_json::Value,
-    ) -> Result<()> {
-        let created_at = chrono::Utc::now().timestamp_millis();
-
-        sqlx::query(
-            r#"
-            INSERT INTO graph_nodes (node_id, node_type, properties, created_at)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT(node_id) DO UPDATE SET
-                node_type = EXCLUDED.node_type,
-                properties = EXCLUDED.properties
-            "#,
-        )
-        .bind(node_id)
-        .bind(node_type)
-        .bind(properties)
-        .bind(created_at)
-        .execute(&self.pool)
-        .await?;
-
+    pub async fn add_node(&self, node: &GraphNode) -> Result<()> {
+        self.client
+            .post(format!("{}/nodes", self.base_url))
+            .json(node)
+            .send()
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 
     /// Get a node by ID
-    pub async fn get_node(&self, node_id: &str) -> Result<Option<GraphNode>> {
-        let node = sqlx::query_as::<_, GraphNode>(
-            "SELECT node_id, node_type, properties, created_at FROM graph_nodes WHERE node_id = $1",
-        )
-        .bind(node_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(node)
-    }
-
-    /// Delete a node and its edges
-    pub async fn delete_node(&self, node_id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM graph_nodes WHERE node_id = $1")
-            .bind(node_id)
-            .execute(&self.pool)
+    pub async fn get_node(&self, id: &str) -> Result<Option<GraphNode>> {
+        let response = self.client
+            .get(format!("{}/nodes/{}", self.base_url, id))
+            .send()
             .await?;
 
-        Ok(result.rows_affected() > 0)
+        if response.status().is_success() {
+            Ok(Some(response.json().await?))
+        } else if response.status().as_u16() == 404 {
+            Ok(None)
+        } else {
+            response.error_for_status()?;
+            Ok(None)
+        }
+    }
+
+    /// Delete a node by ID
+    pub async fn delete_node(&self, id: &str) -> Result<bool> {
+        let response = self.client
+            .delete(format!("{}/nodes/{}", self.base_url, id))
+            .send()
+            .await?;
+
+        Ok(response.status().is_success())
     }
 
     /// Create an edge between two nodes
-    pub async fn link_nodes(
-        &self,
-        source_id: &str,
-        target_id: &str,
-        edge_type: &str,
-        weight: f32,
-        properties: serde_json::Value,
-    ) -> Result<String> {
-        let edge_id = format!("{}->{}:{}", source_id, target_id, edge_type);
-
-        sqlx::query(
-            r#"
-            INSERT INTO graph_edges (edge_id, source_id, target_id, edge_type, weight, properties)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT(edge_id) DO UPDATE SET
-                weight = EXCLUDED.weight,
-                properties = EXCLUDED.properties
-            "#,
-        )
-        .bind(&edge_id)
-        .bind(source_id)
-        .bind(target_id)
-        .bind(edge_type)
-        .bind(weight)
-        .bind(properties)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(edge_id)
+    pub async fn add_edge(&self, edge: &GraphEdge) -> Result<()> {
+        self.client
+            .post(format!("{}/edges", self.base_url))
+            .json(edge)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
     }
 
     /// Get neighbors of a node
-    pub async fn get_neighbors(
-        &self,
-        node_id: &str,
-        edge_type: Option<&str>,
-    ) -> Result<Vec<(String, f32)>> {
-        let query = match edge_type {
-            Some(et) => sqlx::query(
-                r#"
-                SELECT target_id, weight FROM graph_edges 
-                WHERE source_id = $1 AND edge_type = $2
-                ORDER BY weight DESC
-                "#,
-            )
-            .bind(node_id)
-            .bind(et),
-            None => sqlx::query(
-                r#"
-                SELECT target_id, weight FROM graph_edges 
-                WHERE source_id = $1
-                ORDER BY weight DESC
-                "#,
-            )
-            .bind(node_id),
+    pub async fn get_neighbors(&self, id: &str, relation: Option<&str>) -> Result<Vec<GraphNode>> {
+        let mut url = format!("{}/nodes/{}/neighbors", self.base_url, id);
+        if let Some(rel) = relation {
+            url = format!("{}?relation={}", url, rel);
+        }
+
+        let response = self.client
+            .get(&url)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response.json().await?)
+    }
+
+    /// Create a chunk node with standard properties
+    pub async fn create_chunk_node(&self, chunk_id: &str, document_id: &str) -> Result<()> {
+        let node = GraphNode {
+            id: chunk_id.to_string(),
+            label: "Chunk".to_string(),
+            properties: serde_json::json!({
+                "document_id": document_id,
+                "created_at": chrono::Utc::now().timestamp_millis()
+            }),
         };
-
-        let rows = query.fetch_all(&self.pool).await?;
-
-        Ok(rows
-            .iter()
-            .map(|r| (r.get::<String, _>("target_id"), r.get::<f32, _>("weight")))
-            .collect())
+        self.add_node(&node).await
     }
 
-    /// Get node count
-    pub async fn node_count(&self) -> Result<i64> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM graph_nodes")
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(row.get("count"))
+    /// Link two chunks as similar
+    pub async fn link_similar(&self, chunk_a: &str, chunk_b: &str, similarity: f32) -> Result<()> {
+        let edge = GraphEdge {
+            from_id: chunk_a.to_string(),
+            to_id: chunk_b.to_string(),
+            relation: "SIMILAR_TO".to_string(),
+            properties: Some(serde_json::json!({ "similarity": similarity })),
+        };
+        self.add_edge(&edge).await
     }
 
-    /// Get edge count
-    pub async fn edge_count(&self) -> Result<i64> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM graph_edges")
-            .fetch_one(&self.pool)
+    /// Health check
+    pub async fn health_check(&self) -> Result<bool> {
+        let response = self.client
+            .get(format!("{}/health", self.base_url))
+            .send()
             .await?;
-        Ok(row.get("count"))
+        Ok(response.status().is_success())
     }
 }
 
@@ -212,35 +142,23 @@ mod tests {
     #[test]
     fn test_graph_node_serialization() {
         let node = GraphNode {
-            node_id: "node:1".to_string(),
-            node_type: "document".to_string(),
-            properties: serde_json::json!({"title": "Test"}),
-            created_at: 1234567890,
+            id: "chunk:1".to_string(),
+            label: "Chunk".to_string(),
+            properties: serde_json::json!({"doc": "test"}),
         };
-
-        let json = serde_json::to_string(&node).expect("Serialize");
-        let parsed: GraphNode = serde_json::from_str(&json).expect("Deserialize");
-
-        assert_eq!(parsed.node_id, "node:1");
-        assert_eq!(parsed.node_type, "document");
+        let json = serde_json::to_string(&node).unwrap();
+        assert!(json.contains("chunk:1"));
     }
 
     #[test]
     fn test_graph_edge_serialization() {
         let edge = GraphEdge {
-            edge_id: "e1".to_string(),
-            source_id: "node:1".to_string(),
-            target_id: "node:2".to_string(),
-            edge_type: "references".to_string(),
-            weight: 0.85,
-            properties: serde_json::json!({}),
+            from_id: "chunk:1".to_string(),
+            to_id: "chunk:2".to_string(),
+            relation: "SIMILAR_TO".to_string(),
+            properties: Some(serde_json::json!({"similarity": 0.95})),
         };
-
-        let json = serde_json::to_string(&edge).expect("Serialize");
-        let parsed: GraphEdge = serde_json::from_str(&json).expect("Deserialize");
-
-        assert_eq!(parsed.source_id, "node:1");
-        assert_eq!(parsed.target_id, "node:2");
-        assert_eq!(parsed.weight, 0.85);
+        let json = serde_json::to_string(&edge).unwrap();
+        assert!(json.contains("SIMILAR_TO"));
     }
 }

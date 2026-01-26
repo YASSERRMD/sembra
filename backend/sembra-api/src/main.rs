@@ -13,12 +13,15 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 // Re-export crates for use in handlers
+use sembra_storage::BarqDB;
+use sembra_graph::BarqGraphDB;
 use sembra_cache::CelrixCache;
 
 /// Application state shared across handlers
 pub struct AppState {
     pub cache: CelrixCache,
-    // Add database connections when ready
+    pub barq_db: BarqDB,
+    pub barq_graph: BarqGraphDB,
 }
 
 /// Health check response
@@ -33,7 +36,7 @@ pub struct HealthResponse {
 #[derive(Deserialize)]
 pub struct RetrieveRequest {
     pub query: String,
-    pub top_k: Option<usize>,
+    pub top_k: Option<i32>,
     #[serde(default)]
     pub query_embedding: Vec<f32>,
 }
@@ -49,33 +52,58 @@ pub struct RetrieveResponse {
 pub struct RetrieveResult {
     pub chunk_id: String,
     pub score: f32,
-    pub text: Option<String>,
+    pub text: String,
+    pub document_id: String,
 }
 
 /// Health check endpoint
-async fn health_handler() -> Json<HealthResponse> {
+async fn health_handler(State(state): State<Arc<RwLock<AppState>>>) -> Json<HealthResponse> {
+    // Check DB health
+    let db_health = state.read().await.barq_graph.health_check().await.unwrap_or(false);
+    
     Json(HealthResponse {
-        status: "healthy".to_string(),
+        status: if db_health { "healthy".to_string() } else { "degraded".to_string() },
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_secs: 0, // TODO: track actual uptime
+        uptime_secs: 0,
     })
 }
 
 /// Retrieve endpoint - search for relevant chunks
 async fn retrieve_handler(
-    State(_state): State<Arc<RwLock<AppState>>>,
+    State(state): State<Arc<RwLock<AppState>>>,
     Json(request): Json<RetrieveRequest>,
 ) -> Result<Json<RetrieveResponse>, StatusCode> {
     let start = std::time::Instant::now();
     let top_k = request.top_k.unwrap_or(10);
+    let state = state.read().await;
 
-    // For now, return mock results
-    // In production, this would query BarqDB
-    let results: Vec<RetrieveResult> = (0..top_k.min(5))
-        .map(|i| RetrieveResult {
-            chunk_id: format!("chunk:{}", i),
-            score: 0.95 - (i as f32 * 0.1),
-            text: Some(format!("Sample result for query: {}", request.query)),
+    // 1. Check cache for query embedding (Simulated for this request scope, 
+    //    normally would check cache for query string -> embedding mapping)
+    
+    // 2. Perform Hybrid Search via BarqDB
+    // If request has no embedding, we would generate it here. 
+    // For now we expect client/ingress to provide it or use mock.
+    let embedding = if request.query_embedding.is_empty() {
+        vec![0.0; 768] // Dimensionality placeholder
+    } else {
+        request.query_embedding
+    };
+
+    let search_results = state.barq_db
+        .hybrid_search(embedding, &request.query, top_k, 60.0)
+        .await
+        .map_err(|e| {
+            tracing::error!("Search failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let results: Vec<RetrieveResult> = search_results
+        .into_iter()
+        .map(|r| RetrieveResult {
+            chunk_id: r.chunk_id,
+            score: r.score,
+            text: r.text,
+            document_id: r.document_id,
         })
         .collect();
 
@@ -104,9 +132,24 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting SEMBRA API server...");
 
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://postgres:password@localhost:5432/sembra".to_string());
+    
+    let graph_url = std::env::var("BARQ_GRAPHDB_URL")
+        .unwrap_or_else(|_| "http://localhost:8081".to_string());
+
+    // Initialize connections
+    info!("Connecting to BarqDB at {}", database_url);
+    let barq_db = BarqDB::connect(&database_url, 10).await?;
+    
+    info!("Connecting to BarqGraphDB at {}", graph_url);
+    let barq_graph = BarqGraphDB::new(&graph_url);
+
     // Create application state
     let state = Arc::new(RwLock::new(AppState {
         cache: CelrixCache::new(100_000, 86400),
+        barq_db,
+        barq_graph,
     }));
 
     // Create router
