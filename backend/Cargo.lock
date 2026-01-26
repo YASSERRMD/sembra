@@ -353,6 +353,7 @@ name = "sembra-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "sembra-types",
  "serde",
  "serde_json",
  "tokio",
@@ -369,6 +370,10 @@ version = "0.1.0"
 [[package]]
 name = "sembra-types"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "serde"
@@ -461,6 +466,16 @@ name = "tagptr"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
+
+[[package]]
+name = "tests-integration"
+version = "0.1.0"
+dependencies = [
+ "sembra-cache",
+ "sembra-core",
+ "sembra-types",
+ "tokio",
+]
 
 [[package]]
 name = "tokio"
