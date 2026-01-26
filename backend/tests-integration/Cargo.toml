@@ -1,0 +1,10 @@
+[package]
+name = "tests-integration"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sembra-cache = { version = "0.1.0", path = "../sembra-cache" }
+sembra-core = { version = "0.1.0", path = "../sembra-core" }
+sembra-types = { version = "0.1.0", path = "../sembra-types" }
+tokio = { workspace = true, features = ["full"] }
