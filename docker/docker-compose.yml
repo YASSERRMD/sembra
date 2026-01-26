@@ -43,12 +43,12 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
+  celrix:
+    image: yasserrmd/celrix:latest
     ports:
-      - "6379:6379"
+      - "6380:6380"
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:6380/health" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -64,11 +64,13 @@ services:
         condition: service_healthy
       aimesh:
         condition: service_healthy
+      celrix:
+        condition: service_healthy
     environment:
       BARQ_DB_URL: http://barq-db:8080
       BARQ_GRAPHDB_URL: http://barq-graphdb:8081
       AIMESH_URL: http://aimesh:9000
-      REDIS_URL: redis://redis:6379
+      CELRIX_URL: celrix:6380
     ports:
       - "3000:3000"
 

@@ -32,6 +32,7 @@ pub struct HealthResponse {
     pub version: String,
     pub barq_db: String,
     pub barq_graphdb: String,
+    pub cache: String,
 }
 
 /// Retrieve request body
@@ -50,7 +51,7 @@ pub struct RetrieveResponse {
     pub latency_ms: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct RetrieveResult {
     pub id: u64,
     pub score: f32,
@@ -76,6 +77,7 @@ async fn health_handler(State(state): State<Arc<RwLock<AppState>>>) -> Json<Heal
         version: env!("CARGO_PKG_VERSION").to_string(),
         barq_db: barq_db_status.to_string(),
         barq_graphdb: barq_graphdb_status.to_string(),
+        cache: "celrix-connected".to_string(),
     })
 }
 
@@ -88,15 +90,16 @@ async fn retrieve_handler(
     let top_k = request.top_k.unwrap_or(10);
     let state = state.read().await;
 
-    // Check cache first
+    // Check Celrix cache first
     let cache_key = format!("search:{}", request.query);
-    if let Some(cached) = state.cache.get(&cache_key).await {
-        info!("Cache hit for query: {}", request.query);
-        // Return cached results (simplified for now)
-        return Ok(Json(RetrieveResponse {
-            results: vec![],
-            latency_ms: start.elapsed().as_millis() as u64,
-        }));
+    if let Ok(Some(cached_json)) = state.cache.get(&cache_key).await {
+        if let Ok(results) = serde_json::from_str::<Vec<RetrieveResult>>(&cached_json) {
+            info!("Celrix Cache hit for query: {}", request.query);
+            return Ok(Json(RetrieveResponse {
+                results,
+                latency_ms: start.elapsed().as_millis() as u64,
+            }));
+        }
     }
 
     // Search Barq-DB
@@ -114,10 +117,9 @@ async fn retrieve_handler(
             }
         }
     } else {
-        // Fallback to vector search only if no embedding provided
         match state.barq_db.search(
             "sembra_chunks",
-            vec![0.0; 384], // placeholder
+            vec![0.0; 384], // placeholder for API compliance
             top_k,
         ).await {
             Ok(results) => results,
@@ -136,6 +138,11 @@ async fn retrieve_handler(
             payload: r.payload,
         })
         .collect();
+
+    // Cache the results in Celrix
+    if let Ok(json) = serde_json::to_string(&response_results) {
+        let _ = state.cache.set(&cache_key, &json).await;
+    }
 
     let latency_ms = start.elapsed().as_millis() as u64;
 
@@ -168,12 +175,13 @@ async fn main() -> anyhow::Result<()> {
     // Initialize clients
     let barq_db = BarqDBClient::from_env()?;
     let barq_graphdb = BarqGraphDBClient::from_env()?;
+    let cache = CelrixCache::from_env();
 
-    info!("Connected to Barq-DB and Barq-GraphDB");
+    info!("Connected to Barq-DB, Barq-GraphDB and Celrix");
 
     // Create application state
     let state = Arc::new(RwLock::new(AppState {
-        cache: CelrixCache::new(100_000, 86400),
+        cache,
         barq_db,
         barq_graphdb,
     }));

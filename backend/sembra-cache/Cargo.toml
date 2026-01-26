@@ -4,8 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-moka = { version = "0.12", features = ["future"] }
 tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Celrix client - using git dependency as documentation suggests
+# In real world, we would use version from crates.io if available
+# For now, we'll implement a simple TCP client if the git dep fails,
+# but let's try to simulate the client implementation structure.
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

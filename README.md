@@ -25,11 +25,11 @@ SEMBRA is a high-performance document retrieval system that integrates with [Bar
 ## Features
 
 - **Hybrid Search** - Combines vector embeddings with BM25 via Barq-DB
-- **High Performance** - Sub-100ms search latency with Celrix in-memory caching (moka)
+- **High Performance** - Sub-100ms search latency with Celrix in-memory caching
 - **Graph Relationships** - Document relationships via Barq-GraphDB with hybrid queries
 - **Message Queue** - AI agent orchestration via AiMesh
 - **REST API** - Clean axum-based API with `/health` and `/v1/retrieve` endpoints
-- **Docker Ready** - Production deployment with Barq-DB, Barq-GraphDB, and AiMesh containers
+- **Docker Ready** - Production deployment with Barq-DB, Barq-GraphDB, AiMesh, and Celrix containers
 
 ## Architecture
 
@@ -41,37 +41,21 @@ SEMBRA is a high-performance document retrieval system that integrates with [Bar
 
 - Docker & Docker Compose
 
-### Run Everything
+### Start Services
 
 ```bash
 cd docker
 docker-compose up -d
 ```
 
-This starts all services:
-- **Barq-DB** on port 8080
-- **Barq-GraphDB** on port 8081
-- **AiMesh** on port 9000
-- **Redis** on port 6379
-- **SEMBRA API** on port 3000
+Services:
+- **Barq-DB** - Vector database (port 8080)
+- **Barq-GraphDB** - Graph + Vector database (port 8081)
+- **AiMesh** - Message queue (port 9000)
+- **Celrix** - Cache (port 6380)
+- **SEMBRA API** - REST API (port 3000)
 
 ### Test the API
-
-```bash
-curl http://localhost:3000/health
-```
-
-### Development Build (Optional)
-
-```bash
-cd backend
-cargo build --release
-cargo test
-```
-
-## API
-
-### Health Check
 
 ```bash
 curl http://localhost:3000/health
@@ -83,7 +67,8 @@ Response:
   "status": "healthy",
   "version": "0.1.0",
   "barq_db": "healthy",
-  "barq_graphdb": "healthy"
+  "barq_graphdb": "healthy",
+  "cache": "celrix-connected"
 }
 ```
 
@@ -119,13 +104,6 @@ cd docker
 docker-compose up -d
 ```
 
-Services:
-- **Barq-DB** - Vector database (port 8080)
-- **Barq-GraphDB** - Graph + Vector database (port 8081)
-- **AiMesh** - Message queue (port 9000)
-- **Redis** - Cache (port 6379)
-- **SEMBRA API** - REST API (port 3000)
-
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -133,7 +111,7 @@ Services:
 | `BARQ_DB_URL` | `http://localhost:8080` | Barq-DB connection |
 | `BARQ_GRAPHDB_URL` | `http://localhost:8081` | Barq-GraphDB connection |
 | `AIMESH_URL` | `http://localhost:9000` | AiMesh connection |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection |
+| `CELRIX_URL` | `celrix:6380` | Celrix connection |
 
 ## Project Structure
 
@@ -142,7 +120,7 @@ sembra/
 ├── backend/
 │   ├── sembra-api/        # REST API server
 │   ├── sembra-core/       # AiMesh consumer
-│   ├── sembra-cache/      # Celrix in-memory cache
+│   ├── sembra-cache/      # Celrix client
 │   ├── sembra-storage/    # Barq-DB client
 │   ├── sembra-graph/      # Barq-GraphDB client
 │   └── sembra-types/      # Shared types
@@ -162,6 +140,7 @@ sembra/
 | Barq-DB | [YASSERRMD/barq-db](https://github.com/YASSERRMD/barq-db) | `yasserrmd/barq-db` |
 | Barq-GraphDB | [YASSERRMD/barq-graphdb](https://github.com/YASSERRMD/barq-graphdb) | `yasserrmd/barq-graphdb` |
 | AiMesh | [YASSERRMD/AiMesh](https://github.com/YASSERRMD/AiMesh) | `yasserrmd/aimesh` |
+| Celrix | [YASSERRMD/celrix](https://github.com/YASSERRMD/celrix) | `yasserrmd/celrix` |
 
 ## License
 

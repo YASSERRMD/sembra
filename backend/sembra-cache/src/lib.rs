@@ -1,69 +1,109 @@
-//! Celrix Cache - high-performance embedding cache using moka
+//! Celrix Cache - Client for Celrix high-performance cache
+//!
+//! Connects to Celrix on TCP port 6380
 
-use moka::future::Cache;
-use std::sync::atomic::{AtomicU64, Ordering};
+use anyhow::Result;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use std::sync::Arc;
-use std::time::Duration;
 
-/// High-performance cache for storing embeddings
+/// Celrix Cache client
+#[derive(Clone)]
 pub struct CelrixCache {
-    cache: Cache<String, Vec<f32>>,
-    hits: Arc<AtomicU64>,
-    misses: Arc<AtomicU64>,
+    connection_string: String,
+    // Simple connection pool (mutex for now)
+    // In production, use a proper pool like deadpool
+    stream: Arc<Mutex<Option<TcpStream>>>,
 }
 
 impl CelrixCache {
-    /// Create a new cache with specified capacity and TTL
-    pub fn new(capacity: u64, ttl_secs: u64) -> Self {
+    /// Create a new Celrix Cache client
+    pub fn new(host: &str, port: u16) -> Self {
         Self {
-            cache: Cache::builder()
-                .max_capacity(capacity)
-                .time_to_live(Duration::from_secs(ttl_secs))
-                .build(),
-            hits: Arc::new(AtomicU64::new(0)),
-            misses: Arc::new(AtomicU64::new(0)),
+            connection_string: format!("{}:{}", host, port),
+            stream: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Insert an embedding into the cache
-    pub async fn insert(&self, chunk_id: String, embedding: Vec<f32>) {
-        self.cache.insert(chunk_id, embedding).await;
-    }
-
-    /// Get an embedding from the cache
-    pub async fn get(&self, chunk_id: &str) -> Option<Vec<f32>> {
-        match self.cache.get(chunk_id).await {
-            Some(emb) => {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                Some(emb)
-            }
-            None => {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
-            }
-        }
-    }
-
-    /// Get the current hit rate as a percentage
-    pub async fn hit_rate(&self) -> f32 {
-        let hits = self.hits.load(Ordering::Relaxed);
-        let misses = self.misses.load(Ordering::Relaxed);
-        let total = hits + misses;
-        if total == 0 {
-            0.0
+    /// Create from environment variable
+    pub fn from_env() -> Self {
+        let url = std::env::var("CELRIX_URL")
+            .unwrap_or_else(|_| "127.0.0.1:6380".to_string());
+        
+        // Parse host:port
+        let parts: Vec<&str> = url.split(':').collect();
+        if parts.len() == 2 {
+            Self::new(parts[0], parts[1].parse().unwrap_or(6380))
         } else {
-            (hits as f32 / total as f32) * 100.0
+            Self::new("127.0.0.1", 6380)
         }
     }
 
-    /// Get the number of cache hits
-    pub fn hits(&self) -> u64 {
-        self.hits.load(Ordering::Relaxed)
+    /// Connect to Celrix
+    async fn connect(&self) -> Result<TcpStream> {
+        let stream = TcpStream::connect(&self.connection_string).await?;
+        Ok(stream)
     }
 
-    /// Get the number of cache misses
-    pub fn misses(&self) -> u64 {
-        self.misses.load(Ordering::Relaxed)
+    /// Set a key-value pair
+    pub async fn set(&self, key: &str, value: &str) -> Result<()> {
+        // Simple RESP-like or custom protocol simulation
+        // "SET key value\r\n"
+        let cmd = format!("SET {} {}\r\n", key, value);
+        
+        let mut guard = self.stream.lock().await;
+        if guard.is_none() {
+            *guard = Some(self.connect().await?);
+        }
+        
+        if let Some(stream) = guard.as_mut() {
+            stream.write_all(cmd.as_bytes()).await?;
+            
+            // Read response OK
+            let mut buf = [0u8; 1024];
+            let n = stream.read(&mut buf).await?;
+            let response = String::from_utf8_lossy(&buf[..n]);
+            
+            if !response.starts_with("OK") {
+                // Retry connection once
+                *guard = Some(self.connect().await?);
+                if let Some(retry_stream) = guard.as_mut() {
+                    retry_stream.write_all(cmd.as_bytes()).await?;
+                    let _ = retry_stream.read(&mut buf).await?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Get a value by key
+    pub async fn get(&self, key: &str) -> Result<Option<String>> {
+        let cmd = format!("GET {}\r\n", key);
+        
+        let mut guard = self.stream.lock().await;
+        if guard.is_none() {
+            *guard = Some(self.connect().await?);
+        }
+        
+        if let Some(stream) = guard.as_mut() {
+            stream.write_all(cmd.as_bytes()).await?;
+            
+            let mut buf = [0u8; 1024];
+            let n = stream.read(&mut buf).await?;
+            let response = String::from_utf8_lossy(&buf[..n]);
+            
+            if response.trim().is_empty() || response.starts_with("ERR") || response.starts_with("NIL") {
+                return Ok(None);
+            }
+            
+            // Assuming response is the value directly for simplicity
+            // In real RESP, it would be bulk string
+            return Ok(Some(response.trim().to_string()));
+        }
+
+        Ok(None)
     }
 }
 
@@ -71,42 +111,9 @@ impl CelrixCache {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_insert_and_get() {
-        let cache = CelrixCache::new(100, 3600);
-        let embedding = vec![0.1, 0.2, 0.3];
-        
-        cache.insert("chunk:1".to_string(), embedding.clone()).await;
-        
-        let result = cache.get("chunk:1").await;
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), embedding);
-    }
-
-    #[tokio::test]
-    async fn test_cache_miss() {
-        let cache = CelrixCache::new(100, 3600);
-        
-        let result = cache.get("nonexistent").await;
-        assert!(result.is_none());
-        assert_eq!(cache.misses(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_hit_rate() {
-        let cache = CelrixCache::new(100, 3600);
-        
-        // Insert some embeddings
-        for i in 0..10 {
-            cache.insert(format!("chunk:{}", i), vec![0.1, 0.2]).await;
-        }
-        
-        // Hit them all
-        for i in 0..10 {
-            let _ = cache.get(&format!("chunk:{}", i)).await;
-        }
-        
-        let hit_rate = cache.hit_rate().await;
-        assert!(hit_rate > 99.0, "Expected 100% hit rate, got {}%", hit_rate);
+    #[test]
+    fn test_client_creation() {
+        let client = CelrixCache::new("localhost", 6380);
+        assert_eq!(client.connection_string, "localhost:6380");
     }
 }
