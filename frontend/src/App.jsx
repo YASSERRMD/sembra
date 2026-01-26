@@ -220,10 +220,46 @@ function Ingest() {
 
 function Config() {
     const [config, setConfig] = useState(null)
+    const [provider, setProvider] = useState('')
+    const [apiKey, setApiKey] = useState('')
+    const [saving, setSaving] = useState(false)
+    const [msg, setMsg] = useState(null)
 
     useEffect(() => {
-        fetch('/api/v1/config').then(res => res.json()).then(setConfig).catch(console.error)
+        fetch('/api/v1/config')
+            .then(res => res.json())
+            .then(data => {
+                setConfig(data)
+                setProvider(data.embedding_provider)
+            })
+            .catch(console.error)
     }, [])
+
+    const handleSave = async () => {
+        setSaving(true)
+        setMsg(null)
+        try {
+            const res = await fetch('/api/v1/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    embedding_provider: provider,
+                    openai_api_key: apiKey || undefined
+                })
+            })
+            if (res.ok) {
+                const data = await res.json()
+                setConfig(data)
+                setMsg({ type: 'success', text: 'Configuration saved!' })
+            } else {
+                throw new Error('Failed to save')
+            }
+        } catch (e) {
+            setMsg({ type: 'error', text: e.message })
+        } finally {
+            setSaving(false)
+        }
+    }
 
     if (!config) return <div className="card">Loading config...</div>
 
@@ -232,15 +268,38 @@ function Config() {
             <h2>Configuration</h2>
             <div className="form-group">
                 <label>Embedding Provider</label>
-                <input value={config.embedding_provider} disabled />
-                <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '0.5rem' }}>
-                    Currently using Mock Provider (Random Vectors) for development.
-                </div>
+                <select value={provider} onChange={e => setProvider(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '0.5rem', background: '#0f172a', color: 'white', border: '1px solid #334155' }}>
+                    <option value="mock">Mock (Random)</option>
+                    <option value="openai">OpenAI</option>
+                </select>
             </div>
+
+            {provider === 'openai' && (
+                <div className="form-group">
+                    <label>OpenAI API Key</label>
+                    <input
+                        type="password"
+                        value={apiKey}
+                        onChange={e => setApiKey(e.target.value)}
+                        placeholder="sk-..."
+                    />
+                </div>
+            )}
+
             <div className="form-group">
                 <label>Vector Dimensions</label>
                 <input value={config.vector_dim} disabled />
             </div>
+
+            <button className="primary" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving...' : 'Save Configuration'}
+            </button>
+
+            {msg && (
+                <div style={{ marginTop: '1rem', color: msg.type === 'success' ? '#4ade80' : '#ef4444' }}>
+                    {msg.text}
+                </div>
+            )}
         </div>
     )
 }

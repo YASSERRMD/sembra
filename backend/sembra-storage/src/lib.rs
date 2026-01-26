@@ -222,6 +222,41 @@ impl BarqDB {
 
         Ok(results)
     }
+
+    /// Initialize configuration table
+    pub async fn init_config_table(&self) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS system_config (
+                key VARCHAR(255) PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at BIGINT
+            )"
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Set a configuration value
+    pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
+        let ts = chrono::Utc::now().timestamp_millis();
+        sqlx::query(
+            "INSERT INTO system_config (key, value, updated_at) VALUES ($1, $2, $3)
+             ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at"
+        )
+        .bind(key).bind(value).bind(ts)
+        .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Get a configuration value
+    pub async fn get_config(&self, key: &str) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM system_config WHERE key = $1")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| r.0))
+    }
 }
 
 #[cfg(test)]

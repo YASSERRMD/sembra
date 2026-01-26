@@ -37,7 +37,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Utils
 uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
+config = "0.14"
+async-trait = "0.1"
+reqwest = { version = "0.12", features = ["json"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
-reqwest = { version = "0.12", features = ["json"] }
+
