@@ -237,6 +237,20 @@ impl BarqDB {
         Ok(())
     }
 
+    /// Initialize authentication schema
+    pub async fn init_auth_schema(&self) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS users (
+                id VARCHAR(255) PRIMARY KEY,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role VARCHAR(50) NOT NULL,
+                created_at BIGINT
+            )"
+        ).execute(&self.pool).await?;
+        Ok(())
+    }
+
     /// Set a configuration value
     pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
         let ts = chrono::Utc::now().timestamp_millis();
@@ -257,6 +271,36 @@ impl BarqDB {
             .await?;
         Ok(row.map(|r| r.0))
     }
+
+    /// Create a new user
+    pub async fn create_user(&self, id: &str, email: &str, hash: &str, role: &str) -> Result<()> {
+        let ts = chrono::Utc::now().timestamp_millis();
+        sqlx::query(
+            "INSERT INTO users (id, email, password_hash, role, created_at) VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(id).bind(email).bind(hash).bind(role).bind(ts)
+        .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Get user by email
+    pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        sqlx::query_as::<_, User>("SELECT id, email, password_hash, role FROM users WHERE email = $1")
+            .bind(email)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(Into::into)
+    }
+}
+
+/// User Entity
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct User {
+    pub id: String,
+    pub email: String,
+    #[serde(skip)]
+    pub password_hash: String,
+    pub role: String,
 }
 
 #[cfg(test)]

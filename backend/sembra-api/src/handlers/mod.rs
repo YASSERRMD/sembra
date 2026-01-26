@@ -207,6 +207,41 @@ pub async fn retrieve_handler(
     Ok(Json(RetrieveResponse { results, latency_ms }))
 }
 
+// Login Structs
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Serialize)]
+pub struct LoginResponse {
+    pub token: String,
+}
+
+pub async fn login_handler(
+    State(state): State<Arc<RwLock<AppState>>>,
+    Json(req): Json<LoginRequest>,
+) -> Result<Json<LoginResponse>, StatusCode> {
+    let state = state.read().await;
+    
+    let user = state.barq_db.get_user_by_email(&req.email).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        
+    let user = match user {
+        Some(u) => u,
+        None => return Err(StatusCode::UNAUTHORIZED),
+    };
+
+    if state.auth.verify_password(&user.password_hash, &req.password) {
+        let token = state.auth.generate_token(&user.id, &user.role)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        Ok(Json(LoginResponse { token }))
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
 pub fn create_router(state: Arc<RwLock<AppState>>) -> Router {
     Router::new()
         .route("/health", get(health_handler))
@@ -214,6 +249,7 @@ pub fn create_router(state: Arc<RwLock<AppState>>) -> Router {
         .route("/v1/config", get(config_handler).post(update_config_handler))
         .route("/v1/ingest", post(ingest_handler))
         .route("/v1/retrieve", post(retrieve_handler))
+        .route("/v1/login", post(login_handler)) // New route
         .with_state(state)
         .layer(tower_http::cors::CorsLayer::permissive())
 }

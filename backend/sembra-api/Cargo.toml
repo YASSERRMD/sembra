@@ -41,6 +41,12 @@ config = "0.14"
 async-trait = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
 
+# Security
+jsonwebtoken = "9"
+argon2 = { version = "0.5", features = ["std"] }
+chrono = "0.4"
+axum-extra = { version = "0.9", features = ["cookie", "typed-header"] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 
