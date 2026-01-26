@@ -101,6 +101,94 @@ impl BarqDB {
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
+
+    /// Vector similarity search using pgvector cosine distance
+    pub async fn vector_search(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<(String, f32)>> {
+        let embedding_vec = Vector::from(query_embedding.to_vec());
+        
+        let rows = sqlx::query(
+            r#"
+            SELECT chunk_id, 1 - (embedding <=> $1) as score
+            FROM sembra_chunks
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> $1
+            LIMIT $2
+            "#,
+        )
+        .bind(&embedding_vec)
+        .bind(top_k as i32)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| (r.get::<String, _>("chunk_id"), r.get::<f32, _>("score")))
+            .collect())
+    }
+
+    /// BM25 full-text search using PostgreSQL's built-in text search
+    pub async fn bm25_search(
+        &self,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<(String, f32)>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT chunk_id, 
+                   ts_rank_cd(to_tsvector('english', text), plainto_tsquery('english', $1)) as score
+            FROM sembra_chunks
+            WHERE to_tsvector('english', text) @@ plainto_tsquery('english', $1)
+            ORDER BY score DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(query)
+        .bind(top_k as i32)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| (r.get::<String, _>("chunk_id"), r.get::<f32, _>("score")))
+            .collect())
+    }
+
+    /// Hybrid search combining vector and BM25 with Reciprocal Rank Fusion (RRF)
+    pub async fn hybrid_search(
+        &self,
+        query: &str,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<(String, f32)>> {
+        // Get results from both search methods
+        let bm25_results = self.bm25_search(query, 100).await?;
+        let vector_results = self.vector_search(query_embedding, 100).await?;
+
+        // RRF Fusion with k=60 (standard constant)
+        let mut fused: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+        
+        // Weight for BM25 results
+        for (rank, (chunk_id, _)) in bm25_results.iter().enumerate() {
+            let rrf_score = 1.0 / (60.0 + rank as f32) * 0.5;
+            *fused.entry(chunk_id.clone()).or_insert(0.0) += rrf_score;
+        }
+        
+        // Weight for vector results
+        for (rank, (chunk_id, _)) in vector_results.iter().enumerate() {
+            let rrf_score = 1.0 / (60.0 + rank as f32) * 0.5;
+            *fused.entry(chunk_id.clone()).or_insert(0.0) += rrf_score;
+        }
+
+        // Sort by fused score
+        let mut sorted: Vec<_> = fused.into_iter().collect();
+        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        Ok(sorted.into_iter().take(top_k).collect())
+    }
 }
 
 #[cfg(test)]
