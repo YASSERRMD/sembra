@@ -1,0 +1,19 @@
+[workspace]
+members = [
+    "sembra-api",
+    "sembra-core",
+    "sembra-types",
+    "sembra-storage",
+    "sembra-graph",
+    "sembra-cache",
+]
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
