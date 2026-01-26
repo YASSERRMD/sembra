@@ -41,6 +41,15 @@ services:
       redis:
         condition: service_healthy
 
+  sembra-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - sembra-api
+
   tests:
     build:
       context: ..
