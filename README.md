@@ -33,35 +33,7 @@ SEMBRA is a high-performance document retrieval system that combines **vector si
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      REST API (Axum)                        │
-│                 GET /health  POST /v1/retrieve              │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-          ┌───────────────┼───────────────┐
-          │               │               │
-          ▼               ▼               ▼
-    ┌──────────┐   ┌──────────┐   ┌──────────┐
-    │  AiMesh  │   │  Celrix  │   │  Graph   │
-    │ Consumer │   │  Cache   │   │    DB    │
-    │ (Broker) │   │  (moka)  │   │ (nodes)  │
-    └──────────┘   └──────────┘   └──────────┘
-          │               │               │
-          └───────────────┼───────────────┘
-                          │
-                          ▼
-    ┌─────────────────────────────────────────────────────────┐
-    │                      BarqDB                             │
-    │              PostgreSQL + pgvector                      │
-    │  ┌─────────────────┐    ┌─────────────────┐            │
-    │  │  Vector Search  │    │   BM25 Search   │            │
-    │  │  (HNSW Index)   │    │   (GIN Index)   │            │
-    │  └─────────────────┘    └─────────────────┘            │
-    │                    ▼                                    │
-    │            Hybrid RRF Fusion                            │
-    └─────────────────────────────────────────────────────────┘
-```
+![SEMBRA Architecture](assets/architecture.png)
 
 ## Quick Start
 
