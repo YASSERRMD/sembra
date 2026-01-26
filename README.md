@@ -20,16 +20,16 @@
 
 ## Overview
 
-SEMBRA is a high-performance document retrieval system that combines **vector similarity search**, **BM25 full-text search**, and **graph-based relationships** for intelligent semantic search. Built with Rust for maximum performance and reliability.
+SEMBRA is a high-performance document retrieval system that integrates with [Barq-DB](https://github.com/YASSERRMD/barq-db) for vector search, [Barq-GraphDB](https://github.com/YASSERRMD/barq-graphdb) for graph relationships, and [AiMesh](https://github.com/YASSERRMD/AiMesh) for message queue orchestration. Built with Rust for maximum performance.
 
 ## Features
 
-- **Hybrid Search** - Combines vector embeddings with BM25 using Reciprocal Rank Fusion (RRF)
-- **High Performance** - Sub-100ms search latency with moka in-memory caching
-- **Vector Embeddings** - 768-dimensional vectors with pgvector HNSW indexing
-- **Graph Relationships** - Document relationships via GraphDB with neighbor traversal
+- **Hybrid Search** - Combines vector embeddings with BM25 via Barq-DB
+- **High Performance** - Sub-100ms search latency with Celrix in-memory caching (moka)
+- **Graph Relationships** - Document relationships via Barq-GraphDB with hybrid queries
+- **Message Queue** - AI agent orchestration via AiMesh
 - **REST API** - Clean axum-based API with `/health` and `/v1/retrieve` endpoints
-- **Docker Ready** - Production-ready Docker deployment with PostgreSQL and Redis
+- **Docker Ready** - Production deployment with Barq-DB, Barq-GraphDB, and AiMesh containers
 
 ## Architecture
 
@@ -40,35 +40,29 @@ SEMBRA is a high-performance document retrieval system that combines **vector si
 ### Prerequisites
 
 - Rust 1.75+
-- PostgreSQL 15+ with pgvector extension
-- Docker & Docker Compose (optional)
+- Docker & Docker Compose
 
-### Build
+### Start Services
+
+```bash
+cd docker
+docker-compose up -d barq-db barq-graphdb aimesh redis
+```
+
+### Build & Run
 
 ```bash
 cd backend
 cargo build --release
-```
-
-### Run
-
-```bash
-# Start the API server
 cargo run -p sembra-api
-
-# Server starts at http://localhost:3000
 ```
+
+Server starts at http://localhost:3000
 
 ### Test
 
 ```bash
-# Run all tests
 cargo test
-
-# Run specific crate tests
-cargo test -p sembra-core
-cargo test -p sembra-cache
-cargo test -p sembra-storage
 ```
 
 ## API
@@ -84,7 +78,8 @@ Response:
 {
   "status": "healthy",
   "version": "0.1.0",
-  "uptime_secs": 123
+  "barq_db": "healthy",
+  "barq_graphdb": "healthy"
 }
 ```
 
@@ -104,8 +99,8 @@ Response:
 ```json
 {
   "results": [
-    {"chunk_id": "chunk:123", "score": 0.95, "text": "..."},
-    {"chunk_id": "chunk:456", "score": 0.89, "text": "..."}
+    {"id": 123, "score": 0.95, "payload": {...}},
+    {"id": 456, "score": 0.89, "payload": {...}}
   ],
   "latency_ms": 45
 }
@@ -113,25 +108,28 @@ Response:
 
 ## Docker
 
-### Start Services
+### Start All Services
 
 ```bash
 cd docker
 docker-compose up -d
 ```
 
-This starts:
-- **PostgreSQL** with pgvector on port 5432
-- **Redis** cache on port 6379
-- **SEMBRA API** on port 3000
+Services:
+- **Barq-DB** - Vector database (port 8080)
+- **Barq-GraphDB** - Graph + Vector database (port 8081)
+- **AiMesh** - Message queue (port 9000)
+- **Redis** - Cache (port 6379)
+- **SEMBRA API** - REST API (port 3000)
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | `postgresql://postgres:password@localhost:5432/sembra` | PostgreSQL connection |
+| `BARQ_DB_URL` | `http://localhost:8080` | Barq-DB connection |
+| `BARQ_GRAPHDB_URL` | `http://localhost:8081` | Barq-GraphDB connection |
+| `AIMESH_URL` | `http://localhost:9000` | AiMesh connection |
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection |
-| `PORT` | `3000` | API server port |
 
 ## Project Structure
 
@@ -139,45 +137,27 @@ This starts:
 sembra/
 ├── backend/
 │   ├── sembra-api/        # REST API server
-│   ├── sembra-core/       # AiMesh message consumer
+│   ├── sembra-core/       # AiMesh consumer
 │   ├── sembra-cache/      # Celrix in-memory cache
-│   ├── sembra-storage/    # BarqDB PostgreSQL layer
-│   ├── sembra-graph/      # GraphDB relationships
+│   ├── sembra-storage/    # Barq-DB client
+│   ├── sembra-graph/      # Barq-GraphDB client
 │   └── sembra-types/      # Shared types
 ├── docker/
 │   ├── docker-compose.yml
 │   ├── Dockerfile.api
-│   └── postgres-init.sql
-├── tests/
-│   └── integration_*.rs
+│   └── Dockerfile.tests
 └── assets/
-    └── logo.svg
+    ├── logo.svg
+    └── architecture.png
 ```
 
-## Crates
+## External Dependencies
 
-| Crate | Description |
-|-------|-------------|
-| `sembra-api` | Axum REST API with health and retrieve endpoints |
-| `sembra-core` | AiMesh consumer for message broker integration |
-| `sembra-cache` | High-performance moka cache with TTL and hit rate tracking |
-| `sembra-storage` | PostgreSQL storage with pgvector for embeddings |
-| `sembra-graph` | Graph database for document relationships |
-
-## Search Algorithms
-
-### Vector Search
-Uses pgvector's cosine distance with HNSW indexing for fast approximate nearest neighbor search on 768-dimensional embeddings.
-
-### BM25 Search
-PostgreSQL full-text search with `ts_rank_cd` scoring and GIN indexing.
-
-### Hybrid RRF Fusion
-Combines vector and BM25 results using Reciprocal Rank Fusion (k=60):
-
-```
-score = Σ 1/(k + rank) * weight
-```
+| Service | Repository | Docker Image |
+|---------|------------|--------------|
+| Barq-DB | [YASSERRMD/barq-db](https://github.com/YASSERRMD/barq-db) | `yasserrmd/barq-db` |
+| Barq-GraphDB | [YASSERRMD/barq-graphdb](https://github.com/YASSERRMD/barq-graphdb) | `yasserrmd/barq-graphdb` |
+| AiMesh | [YASSERRMD/AiMesh](https://github.com/YASSERRMD/AiMesh) | `yasserrmd/aimesh` |
 
 ## License
 

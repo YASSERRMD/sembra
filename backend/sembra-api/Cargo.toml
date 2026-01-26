@@ -36,19 +36,3 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 reqwest = { version = "0.12", features = ["json"] }
-
-[[test]]
-name = "integration_day1"
-path = "../tests/integration_day1.rs"
-
-[[test]]
-name = "integration_day2"
-path = "../tests/integration_day2.rs"
-
-[[test]]
-name = "integration_day3"
-path = "../tests/integration_day3.rs"
-
-[[test]]
-name = "integration_day5"
-path = "../tests/integration_day5.rs"

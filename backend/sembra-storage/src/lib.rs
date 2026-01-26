@@ -1,198 +1,215 @@
-//! Barq-DB Storage Layer - PostgreSQL with pgvector
+//! Barq-DB Storage Layer - HTTP Client for Barq-DB Vector Database
+//!
+//! Connects to Barq-DB REST API at http://localhost:8080
 
 use anyhow::Result;
-use pgvector::Vector;
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::PgPoolOptions;
-use sqlx::{FromRow, PgPool, Row};
 
 /// Stored chunk data
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredChunk {
-    pub chunk_id: String,
-    pub document_id: String,
+    pub id: u64,
     pub text: String,
-    pub metadata: Option<serde_json::Value>,
-    pub created_at: Option<i64>,
+    pub vector: Vec<f32>,
+    pub payload: serde_json::Value,
 }
 
-/// Barq-DB - High-performance PostgreSQL storage with pgvector
-pub struct BarqDB {
-    pool: PgPool,
+/// Search result from Barq-DB
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub id: u64,
+    pub score: f32,
+    pub payload: Option<serde_json::Value>,
 }
 
-impl BarqDB {
-    /// Connect to PostgreSQL database
-    pub async fn connect(database_url: &str, pool_size: u32) -> Result<Self> {
-        let pool = PgPoolOptions::new()
-            .max_connections(pool_size)
-            .connect(database_url)
-            .await?;
+/// Barq-DB Client - connects to Barq-DB vector database via REST API
+pub struct BarqDBClient {
+    client: reqwest::Client,
+    base_url: String,
+    api_key: Option<String>,
+}
 
-        Ok(Self { pool })
+impl BarqDBClient {
+    /// Create a new Barq-DB client
+    pub fn new(base_url: &str, api_key: Option<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key,
+        }
     }
 
-    /// Insert a chunk with embedding into the database
-    pub async fn insert_chunk(
+    /// Create from environment variable
+    pub fn from_env() -> Result<Self> {
+        let base_url = std::env::var("BARQ_DB_URL")
+            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+        let api_key = std::env::var("BARQ_DB_API_KEY").ok();
+        Ok(Self::new(&base_url, api_key))
+    }
+
+    /// Create a collection
+    pub async fn create_collection(
         &self,
-        chunk_id: &str,
-        document_id: &str,
-        text: &str,
-        embedding: Vec<f32>,
-        metadata: serde_json::Value,
+        name: &str,
+        dimension: usize,
+        metric: &str,
     ) -> Result<()> {
-        let embedding_vec = Vector::from(embedding);
-        let created_at = chrono::Utc::now().timestamp_millis();
+        let url = format!("{}/collections", self.base_url);
+        let body = serde_json::json!({
+            "name": name,
+            "dimension": dimension,
+            "metric": metric
+        });
 
-        sqlx::query(
-            r#"
-            INSERT INTO sembra_chunks (chunk_id, document_id, text, embedding, metadata, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT(chunk_id) DO UPDATE SET
-                text = EXCLUDED.text,
-                embedding = EXCLUDED.embedding,
-                metadata = EXCLUDED.metadata
-            "#,
-        )
-        .bind(chunk_id)
-        .bind(document_id)
-        .bind(text)
-        .bind(embedding_vec)
-        .bind(metadata)
-        .bind(created_at)
-        .execute(&self.pool)
-        .await?;
+        let mut req = self.client.post(&url).json(&body);
+        if let Some(ref key) = self.api_key {
+            req = req.header("Authorization", format!("Bearer {}", key));
+        }
 
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to create collection: {} - {}", status, text);
+        }
         Ok(())
     }
 
-    /// Get the total number of chunks in the database
-    pub async fn chunk_count(&self) -> Result<i64> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM sembra_chunks")
-            .fetch_one(&self.pool)
-            .await?;
-
-        Ok(row.get("count"))
-    }
-
-    /// Get a chunk by ID
-    pub async fn get_chunk(&self, chunk_id: &str) -> Result<Option<StoredChunk>> {
-        let chunk = sqlx::query_as::<_, StoredChunk>(
-            "SELECT chunk_id, document_id, text, metadata, created_at FROM sembra_chunks WHERE chunk_id = $1",
-        )
-        .bind(chunk_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(chunk)
-    }
-
-    /// Delete a chunk by ID
-    pub async fn delete_chunk(&self, chunk_id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM sembra_chunks WHERE chunk_id = $1")
-            .bind(chunk_id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
-    /// Get pool reference for advanced operations
-    pub fn pool(&self) -> &PgPool {
-        &self.pool
-    }
-
-    /// Vector similarity search using pgvector cosine distance
-    pub async fn vector_search(
+    /// Insert a document into a collection
+    pub async fn insert(
         &self,
-        query_embedding: &[f32],
-        top_k: usize,
-    ) -> Result<Vec<(String, f32)>> {
-        let embedding_vec = Vector::from(query_embedding.to_vec());
-        
-        let rows = sqlx::query(
-            r#"
-            SELECT chunk_id, 1 - (embedding <=> $1) as score
-            FROM sembra_chunks
-            WHERE embedding IS NOT NULL
-            ORDER BY embedding <=> $1
-            LIMIT $2
-            "#,
-        )
-        .bind(&embedding_vec)
-        .bind(top_k as i32)
-        .fetch_all(&self.pool)
-        .await?;
+        collection: &str,
+        id: u64,
+        vector: Vec<f32>,
+        payload: serde_json::Value,
+    ) -> Result<()> {
+        let url = format!("{}/collections/{}/documents", self.base_url, collection);
+        let body = serde_json::json!({
+            "id": id,
+            "vector": vector,
+            "payload": payload
+        });
 
-        Ok(rows
-            .iter()
-            .map(|r| (r.get::<String, _>("chunk_id"), r.get::<f32, _>("score")))
-            .collect())
+        let mut req = self.client.post(&url).json(&body);
+        if let Some(ref key) = self.api_key {
+            req = req.header("Authorization", format!("Bearer {}", key));
+        }
+
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to insert document: {} - {}", status, text);
+        }
+        Ok(())
     }
 
-    /// BM25 full-text search using PostgreSQL's built-in text search
-    pub async fn bm25_search(
+    /// Vector search
+    pub async fn search(
         &self,
-        query: &str,
+        collection: &str,
+        vector: Vec<f32>,
         top_k: usize,
-    ) -> Result<Vec<(String, f32)>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT chunk_id, 
-                   ts_rank_cd(to_tsvector('english', text), plainto_tsquery('english', $1)) as score
-            FROM sembra_chunks
-            WHERE to_tsvector('english', text) @@ plainto_tsquery('english', $1)
-            ORDER BY score DESC
-            LIMIT $2
-            "#,
-        )
-        .bind(query)
-        .bind(top_k as i32)
-        .fetch_all(&self.pool)
-        .await?;
+    ) -> Result<Vec<SearchResult>> {
+        let url = format!("{}/collections/{}/search", self.base_url, collection);
+        let body = serde_json::json!({
+            "vector": vector,
+            "top_k": top_k
+        });
 
-        Ok(rows
-            .iter()
-            .map(|r| (r.get::<String, _>("chunk_id"), r.get::<f32, _>("score")))
-            .collect())
+        let mut req = self.client.post(&url).json(&body);
+        if let Some(ref key) = self.api_key {
+            req = req.header("Authorization", format!("Bearer {}", key));
+        }
+
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Search failed: {} - {}", status, text);
+        }
+
+        let results: Vec<SearchResult> = resp.json().await?;
+        Ok(results)
     }
 
-    /// Hybrid search combining vector and BM25 with Reciprocal Rank Fusion (RRF)
+    /// Hybrid search (vector + keyword)
     pub async fn hybrid_search(
         &self,
+        collection: &str,
+        vector: Vec<f32>,
         query: &str,
-        query_embedding: &[f32],
         top_k: usize,
-    ) -> Result<Vec<(String, f32)>> {
-        // Get results from both search methods
-        let bm25_results = self.bm25_search(query, 100).await?;
-        let vector_results = self.vector_search(query_embedding, 100).await?;
+    ) -> Result<Vec<SearchResult>> {
+        let url = format!("{}/collections/{}/hybrid_search", self.base_url, collection);
+        let body = serde_json::json!({
+            "vector": vector,
+            "query": query,
+            "top_k": top_k
+        });
 
-        // RRF Fusion with k=60 (standard constant)
-        let mut fused: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
-        
-        // Weight for BM25 results
-        for (rank, (chunk_id, _)) in bm25_results.iter().enumerate() {
-            let rrf_score = 1.0 / (60.0 + rank as f32) * 0.5;
-            *fused.entry(chunk_id.clone()).or_insert(0.0) += rrf_score;
-        }
-        
-        // Weight for vector results
-        for (rank, (chunk_id, _)) in vector_results.iter().enumerate() {
-            let rrf_score = 1.0 / (60.0 + rank as f32) * 0.5;
-            *fused.entry(chunk_id.clone()).or_insert(0.0) += rrf_score;
+        let mut req = self.client.post(&url).json(&body);
+        if let Some(ref key) = self.api_key {
+            req = req.header("Authorization", format!("Bearer {}", key));
         }
 
-        // Sort by fused score
-        let mut sorted: Vec<_> = fused.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Hybrid search failed: {} - {}", status, text);
+        }
 
-        Ok(sorted.into_iter().take(top_k).collect())
+        let results: Vec<SearchResult> = resp.json().await?;
+        Ok(results)
+    }
+
+    /// Health check
+    pub async fn health(&self) -> Result<bool> {
+        let url = format!("{}/health", self.base_url);
+        let resp = self.client.get(&url).send().await?;
+        Ok(resp.status().is_success())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    // Integration tests require a running PostgreSQL instance
-    // Run with: DATABASE_URL=... cargo test -p sembra-storage
+    use super::*;
+
+    #[test]
+    fn test_stored_chunk_serialization() {
+        let chunk = StoredChunk {
+            id: 1,
+            text: "Hello world".to_string(),
+            vector: vec![0.1, 0.2, 0.3],
+            payload: serde_json::json!({"key": "value"}),
+        };
+
+        let json = serde_json::to_string(&chunk).expect("Serialize");
+        let parsed: StoredChunk = serde_json::from_str(&json).expect("Deserialize");
+
+        assert_eq!(parsed.id, 1);
+        assert_eq!(parsed.text, "Hello world");
+    }
+
+    #[test]
+    fn test_search_result_serialization() {
+        let result = SearchResult {
+            id: 1,
+            score: 0.95,
+            payload: Some(serde_json::json!({"name": "test"})),
+        };
+
+        let json = serde_json::to_string(&result).expect("Serialize");
+        let parsed: SearchResult = serde_json::from_str(&json).expect("Deserialize");
+
+        assert_eq!(parsed.id, 1);
+        assert_eq!(parsed.score, 0.95);
+    }
+
+    #[test]
+    fn test_client_creation() {
+        let client = BarqDBClient::new("http://localhost:8080", None);
+        assert_eq!(client.base_url, "http://localhost:8080");
+    }
 }

@@ -1,18 +1,45 @@
 version: '3.9'
 services:
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: sembra
-    volumes:
-      - ./postgres-init.sql:/docker-entrypoint-initdb.d/init.sql
-      - postgres_data:/var/lib/postgresql/data
+  barq-db:
+    image: yasserrmd/barq-db:latest
     ports:
-      - "5432:5432"
+      - "8080:8080"
+    volumes:
+      - barq_db_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  barq-graphdb:
+    image: yasserrmd/barq-graphdb:latest
+    ports:
+      - "8081:8081"
+      - "50052:50052"
+    volumes:
+      - barq_graphdb_data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8081/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  aimesh:
+    image: yasserrmd/aimesh:latest
+    ports:
+      - "9000:9000"
+    depends_on:
+      barq-db:
+        condition: service_healthy
+      barq-graphdb:
+        condition: service_healthy
+    environment:
+      BARQ_DB_URL: http://barq-db:8080
+      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/health" ]
+      interval: 10s
       timeout: 5s
       retries: 5
 
@@ -21,28 +48,49 @@ services:
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  sembra-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    depends_on:
+      barq-db:
+        condition: service_healthy
+      barq-graphdb:
+        condition: service_healthy
+      aimesh:
+        condition: service_healthy
+    environment:
+      BARQ_DB_URL: http://barq-db:8080
+      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
+      AIMESH_URL: http://aimesh:9000
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3000:3000"
 
   tests:
     build:
       context: ..
       dockerfile: docker/Dockerfile.tests
     depends_on:
-      postgres:
+      barq-db:
         condition: service_healthy
-      redis:
+      barq-graphdb:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:password@postgres:5432/sembra
-      REDIS_URL: redis://redis:6379
+      BARQ_DB_URL: http://barq-db:8080
+      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
+      AIMESH_URL: http://aimesh:9000
     volumes:
       - ../backend:/app/backend
       - test_cache:/app/target
     command: /bin/bash -c "cd /app/backend && cargo test --release"
 
 volumes:
-  postgres_data:
+  barq_db_data:
+  barq_graphdb_data:
   test_cache:
