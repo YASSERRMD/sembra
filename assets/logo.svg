@@ -34,5 +34,4 @@
   
   <!-- Text -->
   <text x="100" y="160" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="url(#grad)">SEMBRA</text>
-  <text x="100" y="180" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#64748b">Semantic Search Engine</text>
 </svg>

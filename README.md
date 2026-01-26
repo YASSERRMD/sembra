@@ -24,17 +24,12 @@ SEMBRA is a high-performance document retrieval system that combines **vector si
 
 ## Features
 
-🔍 **Hybrid Search** - Combines vector embeddings with BM25 using Reciprocal Rank Fusion (RRF)
-
-⚡ **High Performance** - Sub-100ms search latency with moka in-memory caching
-
-🧠 **Vector Embeddings** - 768-dimensional vectors with pgvector HNSW indexing
-
-📊 **Graph Relationships** - Document relationships via GraphDB with neighbor traversal
-
-🔌 **REST API** - Clean axum-based API with `/health` and `/v1/retrieve` endpoints
-
-🐳 **Docker Ready** - Production-ready Docker deployment with PostgreSQL and Redis
+- **Hybrid Search** - Combines vector embeddings with BM25 using Reciprocal Rank Fusion (RRF)
+- **High Performance** - Sub-100ms search latency with moka in-memory caching
+- **Vector Embeddings** - 768-dimensional vectors with pgvector HNSW indexing
+- **Graph Relationships** - Document relationships via GraphDB with neighbor traversal
+- **REST API** - Clean axum-based API with `/health` and `/v1/retrieve` endpoints
+- **Docker Ready** - Production-ready Docker deployment with PostgreSQL and Redis
 
 ## Architecture
 
