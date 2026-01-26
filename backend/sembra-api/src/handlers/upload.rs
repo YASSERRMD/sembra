@@ -171,6 +171,36 @@ pub async fn upload_handler(
     
     info!("Stored {} chunks with graph relationships", chunk_count);
     
+    // Push to AiMesh queue for embedding
+    match sembra_core::aimesh::consumer::AiMeshConsumer::from_env().await {
+        Ok(consumer) => {
+            let messages: Vec<sembra_core::aimesh::consumer::ChunkMessage> = chunks.iter().map(|c| {
+                sembra_core::aimesh::consumer::ChunkMessage {
+                    chunk_id: c.chunk_id.clone(),
+                    text: c.text.clone(),
+                    document_id: c.document_id.clone(),
+                    sequence_num: c.sequence_num as u64,
+                    metadata: serde_json::json!({
+                        "document_name": document_name,
+                        "start_position": c.start_position,
+                        "end_position": c.end_position
+                    }),
+                }
+            }).collect();
+            
+            if let Err(e) = consumer.publish_batch(&messages).await {
+                tracing::error!("Failed to publish chunks to AiMesh: {}", e);
+                // We don't fail the upload, but background worker won't pick it up
+                // TODO: scheduling retry or marking status as error
+            } else {
+                info!("Published {} chunks to AiMesh queue", messages.len());
+            }
+        },
+        Err(e) => {
+            tracing::error!("Failed to connect to AiMesh: {}", e);
+        }
+    }
+    
     Ok(Json(UploadResponse {
         document_id,
         document_name,

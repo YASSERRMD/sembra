@@ -59,6 +59,24 @@ impl AiMeshConsumer {
         Self::connect(&base_url, "sembra:chunks", "sembra_embeddings_v1").await
     }
 
+    /// Publish a batch of messages
+    pub async fn publish_batch(&self, messages: &[ChunkMessage]) -> Result<()> {
+        let url = format!("{}/topics/{}/publish", self.base_url, self.topic);
+        
+        // Wrap messages in payload format expected by AiMesh if needed, 
+        // or just send the chunks directly if the topic supports it.
+        // For this implementation we assume direct JSON array support.
+        let resp = self.client.post(&url).json(messages).send().await?;
+        
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to publish messages: {} - {}", status, text);
+        }
+
+        Ok(())
+    }
+
     /// Read a batch of messages
     pub async fn read_batch(&self, batch_size: usize) -> Result<Vec<ChunkMessage>> {
         let url = format!(
