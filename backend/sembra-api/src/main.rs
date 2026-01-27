@@ -9,7 +9,6 @@ use sembra_cache::CelrixCache;
 
 mod config;
 mod handlers;
-mod providers;
 mod state;
 mod services;
 mod extractors;
@@ -68,6 +67,29 @@ async fn main() -> anyhow::Result<()> {
 
     info!("All services connected successfully!");
 
+    // Initialize Embedding Provider
+    info!("Initializing Embedding Provider...");
+    let provider_type = metadata.get_config("embedding_provider").await.ok().flatten().unwrap_or("mock".into());
+    let model = metadata.get_config("embedding_model").await.ok().flatten().unwrap_or("default".into());
+    
+    let embedding_provider: Arc<dyn sembra_core::providers::EmbeddingProvider> = match provider_type.as_str() {
+        "openai" => {
+            let api_key = metadata.get_config("openai_api_key").await.ok().flatten()
+                .unwrap_or_else(|| std::env::var("OPENAI_API_KEY").unwrap_or_default());
+            info!("Using OpenAI Provider (model: {})", model);
+            Arc::new(sembra_core::providers::openai::OpenAIProvider::new(api_key, model))
+        },
+        "ollama" => {
+            let base_url = std::env::var("OLLAMA_BASE_URL").unwrap_or("http://localhost:11434".into());
+            info!("Using Ollama Provider (model: {})", model);
+            Arc::new(sembra_core::providers::ollama::OllamaProvider::new(base_url, model))
+        },
+        _ => {
+            info!("Using Mock Provider");
+            Arc::new(sembra_core::providers::mock::MockProvider::new())
+        }
+    };
+
     // Create application state
     let state = Arc::new(RwLock::new(AppState {
         cache,
@@ -75,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
         vector_db,
         graph_db,
         auth: auth_service,
+        embedding_provider,
     }));
 
     // Create router

@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/sembra-api /usr/local/bin/
+COPY --from=builder /app/target/release/sembra-worker /usr/local/bin/
 
 EXPOSE 3000
 

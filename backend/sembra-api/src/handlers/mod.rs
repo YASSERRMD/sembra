@@ -141,33 +141,58 @@ pub async fn status_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl 
     })
 }
 
+#[derive(Deserialize)]
+pub struct EmbeddingConfigRequest {
+    pub provider: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub batch_size: Option<usize>,
+}
+
+#[derive(Serialize)]
+pub struct EmbeddingConfigResponse {
+    pub status: String,
+    pub provider: String,
+    pub model: String,
+}
+
 pub async fn config_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl IntoResponse {
     let state = state.read().await;
     let provider = state.metadata.get_config("embedding_provider").await
         .ok().flatten().unwrap_or_else(|| "mock".into());
+    let model = state.metadata.get_config("embedding_model").await
+        .ok().flatten().unwrap_or_else(|| "default".into());
     
-    Json(ConfigResponse {
-        embedding_provider: provider,
-        vector_dim: 384,
+    Json(EmbeddingConfigResponse {
+        status: "active".into(),
+        provider,
+        model,
     })
 }
 
-pub async fn update_config_handler(
+pub async fn configure_embedding_handler(
     State(state): State<Arc<RwLock<AppState>>>,
-    Json(req): Json<ConfigRequest>,
+    Json(req): Json<EmbeddingConfigRequest>,
 ) -> impl IntoResponse {
     let state = state.read().await;
     
-    if let Some(provider) = &req.embedding_provider {
-        state.metadata.set_config("embedding_provider", provider).await.ok();
-    }
-    if let Some(key) = &req.openai_api_key {
+    // Save configuration
+    state.metadata.set_config("embedding_provider", &req.provider).await.ok();
+    state.metadata.set_config("embedding_model", &req.model).await.ok();
+    if let Some(key) = &req.api_key {
         state.metadata.set_config("openai_api_key", key).await.ok();
     }
+    if let Some(batch) = req.batch_size {
+        state.metadata.set_config("embedding_batch_size", &batch.to_string()).await.ok();
+    }
     
-    Json(ConfigResponse {
-        embedding_provider: req.embedding_provider.unwrap_or("mock".into()),
-        vector_dim: 384,
+    // In a real implementation, we would also re-initialize the provider here
+    // For now, we just save the config
+    
+    Json(EmbeddingConfigResponse {
+        status: "configured".into(),
+        provider: req.provider,
+        model: req.model,
     })
 }
 
@@ -275,7 +300,8 @@ pub fn create_router(state: Arc<RwLock<AppState>>) -> Router {
     Router::new()
         .route("/health", get(health_handler))
         .route("/v1/status", get(status_handler))
-        .route("/v1/config", get(config_handler).post(update_config_handler))
+        .route("/v1/config", get(config_handler))
+        .route("/v1/configure-embedding", post(configure_embedding_handler))
         .route("/v1/ingest", post(ingest_handler))
         .route("/v1/retrieve", post(retrieve_handler))
         .route("/v1/login", post(login_handler))
