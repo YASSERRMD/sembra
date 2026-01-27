@@ -102,6 +102,28 @@ services:
     ports:
       - "3000:3000"
 
+  sembra-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      barq-db:
+        condition: service_started
+      barq-graphdb:
+        condition: service_started
+      celrix:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/sembra
+      BARQ_DB_URL: http://barq-db:8080
+      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
+      AIMESH_URL: http://aimesh:9000
+      CELRIX_URL: celrix:6380
+      JWT_SECRET: enterprise_secret_key_change_me
+    command: [ "sembra-worker" ]
+
   # Frontend
   sembra-frontend:
     build:
