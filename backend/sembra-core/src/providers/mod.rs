@@ -10,3 +10,4 @@ pub trait EmbeddingProvider: Send + Sync {
 pub mod openai;
 pub mod mock;
 pub mod ollama;
+pub mod llm;
