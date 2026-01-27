@@ -90,6 +90,25 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Initialize LLM Provider
+    info!("Initializing LLM Provider...");
+    let llm_type = metadata.get_config("llm_provider").await.ok().flatten().unwrap_or("openai".into());
+    let llm_model = metadata.get_config("llm_model").await.ok().flatten().unwrap_or("gpt-4o".into());
+
+    let llm_provider: Arc<RwLock<dyn sembra_core::providers::llm::LLMProvider>> = match llm_type.as_str() {
+        "ollama" => {
+            let base_url = std::env::var("OLLAMA_BASE_URL").unwrap_or("http://localhost:11434".into());
+            info!("Using Ollama LLM Provider ({})", llm_model);
+            Arc::new(RwLock::new(sembra_core::providers::llm::OllamaLLMProvider::new(base_url, llm_model)))
+        },
+        _ => {
+            let api_key = metadata.get_config("openai_api_key").await.ok().flatten()
+                .unwrap_or_else(|| std::env::var("OPENAI_API_KEY").unwrap_or_default());
+            info!("Using OpenAI LLM Provider ({})", llm_model);
+            Arc::new(RwLock::new(sembra_core::providers::llm::OpenAILLMProvider::new(api_key, llm_model)))
+        }
+    };
+
     // Create application state
     let state = Arc::new(RwLock::new(AppState {
         cache,
@@ -98,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
         graph_db,
         auth: auth_service,
         embedding_provider,
+        llm_provider,
     }));
 
     // Create router

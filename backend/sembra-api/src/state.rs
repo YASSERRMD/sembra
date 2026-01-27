@@ -4,7 +4,7 @@ use sembra_storage::{MetadataStore, BarqDBClient};
 use sembra_graph::BarqGraphDBClient;
 use sembra_cache::CelrixCache;
 use crate::services::auth::AuthService;
-use sembra_core::providers::EmbeddingProvider;
+use sembra_core::providers::{EmbeddingProvider, llm::LLMProvider};
 
 pub struct AppState {
     pub cache: CelrixCache,
@@ -13,4 +13,5 @@ pub struct AppState {
     pub graph_db: BarqGraphDBClient,  // BarqGraphDB for Graph
     pub auth: AuthService,
     pub embedding_provider: Arc<dyn EmbeddingProvider>,
+    pub llm_provider: Arc<RwLock<dyn LLMProvider>>,
 }
