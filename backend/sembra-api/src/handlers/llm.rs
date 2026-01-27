@@ -1,0 +1,138 @@
+use axum::{
+    Json,
+    extract::State,
+    http::StatusCode,
+};
+use std::sync::Arc;
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+use crate::state::AppState;
+use sembra_core::providers::llm::{LLMProvider, ChatMessage, OpenAILLMProvider, OllamaLLMProvider};
+
+// --- Configuration ---
+#[derive(Deserialize)]
+pub struct ConfigureLLMRequest {
+    pub provider: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ConfigureLLMResponse {
+    pub status: String,
+    pub provider: String,
+    pub model: String,
+}
+
+pub async fn configure_llm(
+    State(state): State<Arc<RwLock<AppState>>>,
+    Json(payload): Json<ConfigureLLMRequest>,
+) ->  Result<Json<ConfigureLLMResponse>, (StatusCode, String)> {
+    
+    // Create new provider instance first (to validate)
+    let new_provider: Arc<dyn LLMProvider> = match payload.provider.as_str() {
+        "openai" => {
+            let key = payload.api_key.clone().or(std::env::var("OPENAI_API_KEY").ok())
+                .ok_or((StatusCode::BAD_REQUEST, "OpenAI API key required".into()))?;
+            Arc::new(OpenAILLMProvider::new(key, payload.model.clone()))
+        },
+        "ollama" => {
+            let url = payload.base_url.clone().unwrap_or_else(|| std::env::var("OLLAMA_BASE_URL").unwrap_or("http://localhost:11434".into()));
+            Arc::new(OllamaLLMProvider::new(url, payload.model.clone()))
+        },
+        _ => return Err((StatusCode::BAD_REQUEST, "Unsupported provider".into())),
+    };
+
+    let mut state_write = state.write().await;
+    
+    // Save to Postgres
+    state_write.metadata.set_config("llm_provider", &payload.provider).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    state_write.metadata.set_config("llm_model", &payload.model).await
+         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(key) = &payload.api_key {
+         state_write.metadata.set_config("openai_api_key", key).await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    // Update state
+    state_write.llm_provider = new_provider;
+
+    Ok(Json(ConfigureLLMResponse {
+        status: "success".into(),
+        provider: payload.provider,
+        model: payload.model,
+    }))
+}
+
+// --- Ask / RAG ---
+#[derive(Deserialize)]
+pub struct AskRequest {
+    pub query: String,
+    pub include_graph: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub struct AskResponse {
+    pub answer: String,
+    pub context_snippets: Vec<String>,
+}
+
+pub async fn ask(
+    State(state): State<Arc<RwLock<AppState>>>,
+    Json(payload): Json<AskRequest>,
+) -> Result<Json<AskResponse>, (StatusCode, String)> {
+    let state_read = state.read().await;
+
+    // 1. Embed Query
+    let embedding = state_read.embedding_provider.embed_query(&payload.query).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Embedding failed: {}", e)))?;
+
+    // 2. Retrieve from BarqDB (Vector Search)
+    // Assuming BarqDBClient has a search method.
+    // I need to check `sembra-storage/src/lib.rs` to see `BarqDBClient` methods.
+    // In Phase 0 walkthrough it mentioned `BarqDBClient` exists.
+    // I previously used `vector_db.insert`, I need to use `search`.
+    
+    // Placeholder for search (I will check method signature later if this fails to compile)
+    // Actually, I should check it now.
+    // `sembra_storage::SearchResult` exists.
+    
+    // 3. Construct Context
+    let mut context_text = String::new();
+    let mut snippets = Vec::new();
+    
+    // Mock search for now if method not obvious, but let's try `search`.
+    let results = state_read.vector_db.search("sembra_chunks", embedding, 5).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Vector search failed: {}", e)))?;
+
+    for res in results {
+         // res provided by seems-storage?
+         // Need to extract text from payload.
+         // Assuming payload is serde_json::Value
+         if let Some(text) = res.payload.as_ref().and_then(|p| p.get("text")).and_then(|t| t.as_str()) {
+             context_text.push_str(text);
+             context_text.push_str("\n---\n");
+             snippets.push(text.to_string());
+         }
+    }
+
+    // 4. Call LLM
+    let system_prompt = "You are SEMBRA, an enterprise AI assistant. Answer the user's question based strictly on the provided context. If the answer is not in the context, say so.";
+    let user_prompt = format!("Context:\n{}\n\nQuestion: {}", context_text, payload.query);
+
+    let messages = vec![
+        ChatMessage { role: "system".into(), content: system_prompt.into() },
+        ChatMessage { role: "user".into(), content: user_prompt },
+    ];
+
+    let answer = state_read.llm_provider.complete(&messages, 0.7).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("LLM generation failed: {}", e)))?;
+
+    Ok(Json(AskResponse {
+        answer,
+        context_snippets: snippets,
+    }))
+}

@@ -13,5 +13,5 @@ pub struct AppState {
     pub graph_db: BarqGraphDBClient,  // BarqGraphDB for Graph
     pub auth: AuthService,
     pub embedding_provider: Arc<dyn EmbeddingProvider>,
-    pub llm_provider: Arc<RwLock<dyn LLMProvider>>,
+    pub llm_provider: Arc<dyn LLMProvider>,
 }

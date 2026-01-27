@@ -293,6 +293,7 @@ pub async fn login_handler(
 }
 
 pub mod upload;
+pub mod llm;
 
 // ==================== Router ====================
 
@@ -306,6 +307,8 @@ pub fn create_router(state: Arc<RwLock<AppState>>) -> Router {
         .route("/v1/retrieve", post(retrieve_handler))
         .route("/v1/login", post(login_handler))
         .route("/v1/upload", post(upload::upload_handler))
+        .route("/v1/configure-llm", post(llm::configure_llm))
+        .route("/v1/ask", post(llm::ask))
         .with_state(state)
         .layer(tower_http::cors::CorsLayer::permissive())
 }
