@@ -1,24 +1,26 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { ThemeProvider } from './components/ThemeProvider';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import Upload from './pages/Upload';
+import Documents from './pages/Documents';
 import Search from './pages/Search';
 import Settings from './pages/Settings';
 
 function App() {
     return (
-        <Router>
-            <Layout>
+        <ThemeProvider>
+            <BrowserRouter>
                 <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/upload" element={<Upload />} />
-                    <Route path="/search" element={<Search />} />
-                    <Route path="/settings" element={<Settings />} />
-                    <Route path="*" element={<Navigate to="/" replace />} />
+                    <Route path="/" element={<Layout />}>
+                        <Route index element={<Dashboard />} />
+                        <Route path="documents" element={<Documents />} />
+                        <Route path="search" element={<Search />} />
+                        <Route path="settings" element={<Settings />} />
+                    </Route>
                 </Routes>
-            </Layout>
-        </Router>
+            </BrowserRouter>
+        </ThemeProvider>
     );
 }
 

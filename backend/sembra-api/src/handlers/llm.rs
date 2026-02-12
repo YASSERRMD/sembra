@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use crate::state::AppState;
 use sembra_core::providers::llm::{LLMProvider, ChatMessage, OpenAILLMProvider, OllamaLLMProvider};
+use sembra_core::providers::anthropic::AnthropicLLMProvider;
+use sembra_core::providers::groq::GroqLLMProvider;
+use sembra_core::providers::cohere::CohereLLMProvider;
 
 // --- Configuration ---
 #[derive(Deserialize)]
@@ -37,11 +40,38 @@ pub async fn configure_llm(
                 .ok_or((StatusCode::BAD_REQUEST, "OpenAI API key required".into()))?;
             Arc::new(OpenAILLMProvider::new(key, payload.model.clone()))
         },
+        "anthropic" => {
+            let key = payload.api_key.clone().or(std::env::var("ANTHROPIC_API_KEY").ok())
+                .ok_or((StatusCode::BAD_REQUEST, "Anthropic API key required".into()))?;
+            if let Some(base_url) = payload.base_url.clone() {
+                Arc::new(AnthropicLLMProvider::with_base_url(key, payload.model.clone(), base_url))
+            } else {
+                Arc::new(AnthropicLLMProvider::new(key, payload.model.clone()))
+            }
+        },
+        "groq" => {
+            let key = payload.api_key.clone().or(std::env::var("GROQ_API_KEY").ok())
+                .ok_or((StatusCode::BAD_REQUEST, "Groq API key required".into()))?;
+            if let Some(base_url) = payload.base_url.clone() {
+                Arc::new(GroqLLMProvider::with_base_url(key, payload.model.clone(), base_url))
+            } else {
+                Arc::new(GroqLLMProvider::new(key, payload.model.clone()))
+            }
+        },
+        "cohere" => {
+            let key = payload.api_key.clone().or(std::env::var("COHERE_API_KEY").ok())
+                .ok_or((StatusCode::BAD_REQUEST, "Cohere API key required".into()))?;
+            if let Some(base_url) = payload.base_url.clone() {
+                Arc::new(CohereLLMProvider::with_base_url(key, payload.model.clone(), base_url))
+            } else {
+                Arc::new(CohereLLMProvider::new(key, payload.model.clone()))
+            }
+        },
         "ollama" => {
             let url = payload.base_url.clone().unwrap_or_else(|| std::env::var("OLLAMA_BASE_URL").unwrap_or("http://localhost:11434".into()));
             Arc::new(OllamaLLMProvider::new(url, payload.model.clone()))
         },
-        _ => return Err((StatusCode::BAD_REQUEST, "Unsupported provider".into())),
+        _ => return Err((StatusCode::BAD_REQUEST, format!("Unsupported provider: {}. Supported: openai, anthropic, groq, cohere, ollama", payload.provider))),
     };
 
     let mut state_write = state.write().await;
@@ -52,8 +82,17 @@ pub async fn configure_llm(
     state_write.metadata.set_config("llm_model", &payload.model).await
          .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Save API key with provider-specific key name
     if let Some(key) = &payload.api_key {
-         state_write.metadata.set_config("openai_api_key", key).await
+        let key_name = format!("{}_api_key", payload.provider);
+        state_write.metadata.set_config(&key_name, key).await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    // Save base URL if provided
+    if let Some(url) = &payload.base_url {
+        let url_key = format!("{}_base_url", payload.provider);
+        state_write.metadata.set_config(&url_key, url).await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 

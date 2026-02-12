@@ -36,6 +36,7 @@ pub struct ComponentStatus {
     pub barq_db: String,
     pub graph_db: String,
     pub cache: String,
+    pub aimesh: String,
 }
 
 #[derive(Deserialize)]
@@ -130,13 +131,20 @@ pub async fn status_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl 
     let barq_ok = state.vector_db.health().await.unwrap_or(false);
     let graph_ok = state.graph_db.health().await.unwrap_or(false);
     
+    // Check Celrix (Cache)
+    let cache_ok = state.cache.health().await.unwrap_or(false);
+
+    // Check AiMesh connection
+    let aimesh_ok = sembra_core::aimesh::AiMeshConsumer::from_env().await.is_ok();
+    
     Json(StatusResponse {
         total_chunks: 0, // Placeholder
         components: ComponentStatus {
             postgres: if pg_ok { "Connected".into() } else { "Error".into() },
             barq_db: if barq_ok { "Connected".into() } else { "Error".into() },
             graph_db: if graph_ok { "Connected".into() } else { "Error".into() },
-            cache: "Connected".into(),
+            cache: if cache_ok { "Connected".into() } else { "Error".into() },
+            aimesh: if aimesh_ok { "Connected".into() } else { "Error".into() },
         }
     })
 }
@@ -146,6 +154,7 @@ pub struct EmbeddingConfigRequest {
     pub provider: String,
     pub model: String,
     pub api_key: Option<String>,
+    pub base_url: Option<String>,
     pub batch_size: Option<usize>,
 }
 
@@ -179,14 +188,24 @@ pub async fn configure_embedding_handler(
     // Save configuration
     state.metadata.set_config("embedding_provider", &req.provider).await.ok();
     state.metadata.set_config("embedding_model", &req.model).await.ok();
+    
+    // Save provider-specific API key
     if let Some(key) = &req.api_key {
-        state.metadata.set_config("openai_api_key", key).await.ok();
+        let key_name = format!("{}_embedding_api_key", req.provider);
+        state.metadata.set_config(&key_name, key).await.ok();
     }
+    
+    // Save base URL if provided
+    if let Some(url) = &req.base_url {
+        let url_key = format!("{}_embedding_base_url", req.provider);
+        state.metadata.set_config(&url_key, url).await.ok();
+    }
+    
     if let Some(batch) = req.batch_size {
         state.metadata.set_config("embedding_batch_size", &batch.to_string()).await.ok();
     }
     
-    // In a real implementation, we would also re-initialize the provider here
+    // TODO: Re-initialize the embedding provider dynamically
     // For now, we just save the config
     
     Json(EmbeddingConfigResponse {
