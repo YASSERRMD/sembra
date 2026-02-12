@@ -11,3 +11,6 @@ pub mod openai;
 pub mod mock;
 pub mod ollama;
 pub mod llm;
+pub mod anthropic;
+pub mod groq;
+pub mod cohere;
