@@ -16,14 +16,17 @@ services:
       timeout: 5s
       retries: 5
 
-  # BarqDB for Vector Storage
+  # BarqDB for Vector Storage (Primary Network Container)
   barq-db:
     image: yasserrmd/barq-db:latest
     ports:
-      - "8080:8080"
+      - "8080:8080" # BarqDB HTTP
+      - "8081:8081" # BarqGraphDB HTTP (via sidecar)
+      - "50051:50051" # BarqDB gRPC
+      - "50052:50052" # BarqGraphDB gRPC (via sidecar)
+      - "9000:9000" # AiMesh HTTP (via sidecar)
     volumes:
       - barq_db_data:/data
-    # Simplified healthcheck - just check if port is open
     healthcheck:
       test: [ "CMD-SHELL", "nc -z localhost 8080 || exit 1" ]
       interval: 10s
@@ -34,11 +37,13 @@ services:
   # BarqGraphDB for Graph Storage
   barq-graphdb:
     image: yasserrmd/barq-graphdb:latest
-    ports:
-      - "8081:8081"
-      - "50052:50052"
+    # Shared network with barq-db
+    network_mode: service:barq-db
+    command: [ "barqg_server", "--path", "/data", "--host", "0.0.0.0", "--port", "8081", "--grpc-port", "50052" ]
     volumes:
       - barq_graphdb_data:/data
+    # No ports mapping needed (inherited)
+    # Healthcheck must use localhost within the shared namespace
     healthcheck:
       test: [ "CMD-SHELL", "nc -z localhost 8081 || exit 1" ]
       interval: 10s
@@ -49,16 +54,16 @@ services:
   # AiMesh Message Queue
   aimesh:
     image: yasserrmd/aimesh:latest
-    ports:
-      - "9000:9000"
+    network_mode: service:barq-db
     depends_on:
       barq-db:
         condition: service_started
       barq-graphdb:
         condition: service_started
+    # Env vars are ignored by binary but good for documentation; binary uses hardcoded localhost:8080/81
     environment:
-      BARQ_DB_URL: http://barq-db:8080
-      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
+      BARQ_DB_URL: http://localhost:8080
+      BARQ_GRAPHDB_URL: http://localhost:8081
     healthcheck:
       test: [ "CMD-SHELL", "nc -z localhost 9000 || exit 1" ]
       interval: 10s
@@ -95,8 +100,8 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:password@postgres:5432/sembra
       BARQ_DB_URL: http://barq-db:8080
-      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
-      AIMESH_URL: http://aimesh:9000
+      BARQ_GRAPHDB_URL: http://barq-db:8081 # Via barq-db service
+      AIMESH_URL: http://barq-db:9000 # Via barq-db service
       CELRIX_URL: celrix:6380
       JWT_SECRET: enterprise_secret_key_change_me
     ports:
@@ -118,8 +123,8 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:password@postgres:5432/sembra
       BARQ_DB_URL: http://barq-db:8080
-      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
-      AIMESH_URL: http://aimesh:9000
+      BARQ_GRAPHDB_URL: http://barq-db:8081 # Via barq-db service
+      AIMESH_URL: http://barq-db:9000 # Via barq-db service
       CELRIX_URL: celrix:6380
       JWT_SECRET: enterprise_secret_key_change_me
     command: [ "sembra-worker" ]
@@ -147,8 +152,8 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:password@postgres:5432/sembra
       BARQ_DB_URL: http://barq-db:8080
-      BARQ_GRAPHDB_URL: http://barq-graphdb:8081
-      AIMESH_URL: http://aimesh:9000
+      BARQ_GRAPHDB_URL: http://barq-db:8081
+      AIMESH_URL: http://barq-db:9000
     volumes:
       - ../backend:/app/backend
       - test_cache:/app/target
