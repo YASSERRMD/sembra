@@ -74,8 +74,8 @@ impl BarqGraphDBClient {
     pub async fn add_edge(&self, source: u64, target: u64, edge_type: &str) -> Result<()> {
         let url = format!("{}/edges", self.base_url);
         let body = serde_json::json!({
-            "source": source,
-            "target": target,
+            "from": source,
+            "to": target,
             "edge_type": edge_type
         });
 

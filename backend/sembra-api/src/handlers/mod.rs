@@ -137,10 +137,14 @@ pub async fn status_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl 
     // Check AiMesh connection
     let aimesh_ok = sembra_core::aimesh::AiMeshConsumer::from_env().await.is_ok();
     
-    // Get actual chunk count from BarqDB
-    let total_chunks = state.vector_db.search("sembra_chunks", vec![0.0f32; 384], 10000).await
-        .map(|r| r.len() as u64)
-        .unwrap_or(0);
+    // Get actual chunk count from BarqDB (try common dimensions)
+    let mut total_chunks: u64 = 0;
+    for dim in [1024, 384, 768, 1536] {
+        if let Ok(results) = state.vector_db.search("sembra_chunks", vec![0.0f32; dim], 10000).await {
+            total_chunks = results.len() as u64;
+            break;
+        }
+    }
     
     Json(StatusResponse {
         total_chunks,
@@ -201,9 +205,13 @@ pub async fn config_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl 
     let llm_model = state.metadata.get_config("llm_model").await
         .ok().flatten().unwrap_or_else(|| "not configured".into());
     
-    let total_chunks = state.vector_db.search("sembra_chunks", vec![0.0f32; 384], 10000).await
-        .map(|r| r.len() as u64)
-        .unwrap_or(0);
+    let mut total_chunks: u64 = 0;
+    for dim in [1024, 384, 768, 1536] {
+        if let Ok(results) = state.vector_db.search("sembra_chunks", vec![0.0f32; dim], 10000).await {
+            total_chunks = results.len() as u64;
+            break;
+        }
+    }
     
     Json(FullConfigResponse {
         embedding: EmbeddingConfigResponse {
@@ -282,12 +290,24 @@ pub async fn ingest_handler(
     let chunks = split_text(&req.text, 512);
     let count = chunks.len();
     
+    // Generate real embeddings for chunks
+    let chunk_texts: Vec<String> = chunks.iter().map(|s| s.to_string()).collect();
+    let embeddings = state.embedding_provider.embed_documents(&chunk_texts).await
+        .map_err(|e| {
+            tracing::error!("Embedding failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    
+    let embed_dim = embeddings.first().map(|v| v.len()).unwrap_or(1024);
+    
     // Ensure collection exists in BarqDB
-    state.vector_db.create_collection("sembra_chunks", 384, "cosine").await.ok();
+    if let Err(e) = state.vector_db.create_collection("sembra_chunks", embed_dim, "Cosine").await {
+        tracing::warn!("Collection create (may already exist): {}", e);
+    }
     
     for (i, chunk_text) in chunks.iter().enumerate() {
         let chunk_id = hash_string_to_u64(&format!("{}_{}", req.document_id, i));
-        let vector = vec![0.1; 384]; // Placeholder embedding
+        let vector = embeddings.get(i).cloned().unwrap_or_else(|| vec![0.0; embed_dim]);
         
         let payload = serde_json::json!({
             "document_id": req.document_id,
@@ -314,7 +334,12 @@ pub async fn retrieve_handler(
     let state = state.read().await;
     let start = std::time::Instant::now();
     
-    let vector = vec![0.1; 384]; // Placeholder query vector
+    // Generate real embedding for the query
+    let vector = state.embedding_provider.embed_query(&req.query).await
+        .map_err(|e| {
+            tracing::error!("Query embedding failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     
     let results = state.vector_db.hybrid_search("sembra_chunks", vector, &req.query, req.top_k.unwrap_or(5)).await
         .map_err(|e| {

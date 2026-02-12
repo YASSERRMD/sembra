@@ -133,7 +133,7 @@ pub async fn upload_handler(
     info!("Generated {} embeddings (dim={})", embeddings.len(), embed_dim);
     
     // Ensure collection exists in BarqDB with the correct dimension
-    if let Err(e) = state_guard.vector_db.create_collection("sembra_chunks", embed_dim, "cosine").await {
+    if let Err(e) = state_guard.vector_db.create_collection("sembra_chunks", embed_dim, "Cosine").await {
         tracing::warn!("Collection create (may already exist): {}", e);
     }
     
