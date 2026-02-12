@@ -1,113 +1,123 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
-import { Activity, Database, Server, Cpu, HardDrive, FileText } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Activity, Database, FileText, Cpu, HardDrive, Zap } from 'lucide-react';
+import { getStatus, getHealth } from '../lib/api';
 
-const StatCard = ({ icon: Icon, label, value, subtext, color = "text-primary" }) => (
-    <motion.div
-        whileHover={{ y: -5 }}
-        className="glass-card p-6 rounded-xl relative overflow-hidden"
-    >
-        <div className={`absolute top-0 right-0 p-4 opacity-10 ${color}`}>
-            <Icon size={64} />
-        </div>
-        <div className="relative z-10">
-            <div className={`p-3 rounded-lg w-fit mb-4 bg-white/5 ${color}`}>
-                <Icon size={24} />
+function StatCard({ icon: Icon, title, value, status, description }) {
+    return (
+        <div className="card p-6">
+            <div className="flex items-center justify-between mb-4">
+                <div className="p-2 rounded-lg bg-primary/10">
+                    <Icon className="h-5 w-5 text-primary" />
+                </div>
+                {status && (
+                    <span className={`badge ${status === 'healthy' || status === 'Connected' ? 'badge-default' : 'badge-destructive'}`}>
+                        {status}
+                    </span>
+                )}
             </div>
-            <h3 className="text-3xl font-bold text-white mb-1">{value}</h3>
-            <p className="text-muted font-medium mb-2">{label}</p>
-            {subtext && <p className="text-xs text-white/40">{subtext}</p>}
+            <h3 className="text-2xl font-bold">{value}</h3>
+            <p className="text-sm text-muted-foreground">{title}</p>
+            {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
         </div>
-    </motion.div>
-);
+    );
+}
 
-const Dashboard = () => {
-    const [stats, setStats] = useState(null);
+function ComponentCard({ name, status }) {
+    const isHealthy = status === 'Connected' || status === 'connected' || status === 'healthy';
+    return (
+        <div className="flex items-center justify-between p-4 rounded-lg border border-border">
+            <div className="flex items-center gap-3">
+                <div className={`w-2 h-2 rounded-full ${isHealthy ? 'bg-green-500' : 'bg-red-500'}`} />
+                <span className="text-sm font-medium">{name}</span>
+            </div>
+            <span className={`text-xs ${isHealthy ? 'text-green-500' : 'text-red-500'}`}>
+                {status}
+            </span>
+        </div>
+    );
+}
+
+export default function Dashboard() {
+    const [status, setStatus] = useState(null);
+    const [health, setHealth] = useState(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const fetchStats = async () => {
+        const fetchData = async () => {
             try {
-                // In real app, we fetch from /v1/status
-                // For now, mock or fetch
-                const res = await axios.get('http://localhost:3000/v1/status');
-                setStats(res.data);
+                const [statusRes, healthRes] = await Promise.all([
+                    getStatus().catch(() => ({ data: { total_chunks: 0, components: {} } })),
+                    getHealth().catch(() => ({ data: { status: 'unknown' } })),
+                ]);
+                setStatus(statusRes.data);
+                setHealth(healthRes.data);
             } catch (err) {
-                console.error("Failed to fetch stats", err);
+                console.error('Failed to fetch status:', err);
             } finally {
                 setLoading(false);
             }
         };
-        fetchStats();
+        fetchData();
+        const interval = setInterval(fetchData, 10000);
+        return () => clearInterval(interval);
     }, []);
 
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center h-full">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+        );
+    }
+
+    const components = status?.components || {};
+
     return (
-        <div className="space-y-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h2 className="text-2xl font-bold text-white">System Overview</h2>
-                    <p className="text-muted">Real-time infrastructure monitoring</p>
-                </div>
-                <div className="flex items-center space-x-2 text-xs bg-white/5 px-3 py-1 rounded-full border border-white/5">
-                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                    <span className="text-green-400 font-mono">SYSTEM ONLINE</span>
-                </div>
+        <div className="p-8">
+            {/* Header */}
+            <div className="mb-8">
+                <h1 className="text-3xl font-bold">Dashboard</h1>
+                <p className="text-muted-foreground">System overview and health status</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {/* Stats Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <StatCard
                     icon={FileText}
-                    label="Total Documents"
-                    value={stats?.total_chunks || "0"}
-                    subtext="Processed Chunks"
-                    color="text-blue-500"
-                />
-                <StatCard
-                    icon={Database}
-                    label="Vector DB"
-                    value={stats?.components?.barq_db || "Unknown"}
-                    subtext="BarqDB Cluster"
-                    color="text-purple-500"
+                    title="Total Chunks"
+                    value={status?.total_chunks || 0}
+                    description="Documents indexed"
                 />
                 <StatCard
                     icon={Activity}
-                    label="AiMesh Queue"
-                    value="Active"
-                    subtext="Worker Swarm Ready"
-                    color="text-rose-500"
+                    title="System Status"
+                    value={health?.status || 'Unknown'}
+                    status={health?.status}
                 />
                 <StatCard
-                    icon={Cpu}
-                    label="LLM Provider"
-                    value="OpenAI"
-                    subtext="GPT-4o Optimized"
-                    color="text-emerald-500"
+                    icon={Database}
+                    title="Vector DB"
+                    value={components.barq_db || 'Unknown'}
+                    status={components.barq_db}
+                />
+                <StatCard
+                    icon={Zap}
+                    title="Cache"
+                    value={components.cache || 'Unknown'}
+                    status={components.cache}
                 />
             </div>
 
-            {/* Recent Activity Placeholder */}
-            <div className="glass-panel rounded-xl p-6">
-                <h3 className="text-lg font-bold text-white mb-4">Recent Ingestion Activity</h3>
-                <div className="space-y-4">
-                    {[1, 2, 3].map((i) => (
-                        <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/5">
-                            <div className="flex items-center space-x-3">
-                                <div className="w-8 h-8 rounded bg-primary/20 flex items-center justify-center text-primary">
-                                    <FileText size={16} />
-                                </div>
-                                <div>
-                                    <p className="text-sm font-medium text-white">contract_v{i}.pdf</p>
-                                    <p className="text-xs text-muted">Processed {i * 15} mins ago</p>
-                                </div>
-                            </div>
-                            <span className="text-xs font-mono text-green-400 bg-green-500/10 px-2 py-1 rounded">INDEXED</span>
-                        </div>
-                    ))}
+            {/* Components Health */}
+            <div className="card p-6">
+                <h2 className="text-lg font-semibold mb-4">Infrastructure Health</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <ComponentCard name="PostgreSQL" status={components.postgres || health?.postgres || 'Unknown'} />
+                    <ComponentCard name="BarqDB" status={components.barq_db || health?.barq_db || 'Unknown'} />
+                    <ComponentCard name="GraphDB" status={components.graph_db || 'Unknown'} />
+                    <ComponentCard name="Cache (Celrix)" status={components.cache || health?.cache || 'Unknown'} />
                 </div>
             </div>
         </div>
     );
-};
-
-export default Dashboard;
+}

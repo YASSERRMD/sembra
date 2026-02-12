@@ -1,141 +1,216 @@
-import React, { useState, useRef, useEffect } from 'react';
-import axios from 'axios';
-import { Send, Bot, User as UserIcon, Loader2, Search as SearchIcon } from 'lucide-react';
-import { motion } from 'framer-motion';
-import clsx from 'clsx';
+import React, { useState } from 'react';
+import { Search as SearchIcon, Send, Loader2, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { ask } from '../lib/api';
 
-const Search = () => {
+function ContextSnippet({ text, index }) {
+    const [expanded, setExpanded] = useState(false);
+    const preview = text.slice(0, 150);
+    const hasMore = text.length > 150;
+
+    return (
+        <div className="p-3 rounded-lg border border-border bg-muted/30">
+            <div className="flex items-start gap-2">
+                <span className="badge badge-secondary text-xs">{index + 1}</span>
+                <div className="flex-1 min-w-0">
+                    <p className="text-sm text-muted-foreground">
+                        {expanded ? text : preview}
+                        {hasMore && !expanded && '...'}
+                    </p>
+                    {hasMore && (
+                        <button
+                            onClick={() => setExpanded(!expanded)}
+                            className="text-xs text-primary hover:underline mt-1 flex items-center gap-1"
+                        >
+                            {expanded ? (
+                                <>
+                                    <ChevronUp className="h-3 w-3" />
+                                    Show less
+                                </>
+                            ) : (
+                                <>
+                                    <ChevronDown className="h-3 w-3" />
+                                    Show more
+                                </>
+                            )}
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function Message({ role, content, context }) {
+    const isUser = role === 'user';
+
+    return (
+        <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+            <div
+                className={`max-w-[80%] rounded-lg p-4 ${isUser
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted'
+                    }`}
+            >
+                <p className="text-sm whitespace-pre-wrap">{content}</p>
+
+                {/* Context snippets for assistant messages */}
+                {!isUser && context && context.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground mb-2">
+                            <FileText className="h-3 w-3 inline mr-1" />
+                            Sources ({context.length})
+                        </p>
+                        {context.map((snippet, i) => (
+                            <ContextSnippet key={i} text={snippet} index={i} />
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+export default function Search() {
     const [query, setQuery] = useState('');
     const [messages, setMessages] = useState([]);
     const [loading, setLoading] = useState(false);
-    const messagesEndRef = useRef(null);
+    const [includeGraph, setIncludeGraph] = useState(false);
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    };
-
-    useEffect(scrollToBottom, [messages]);
-
-    const handleSearch = async (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!query.trim()) return;
+        if (!query.trim() || loading) return;
 
-        const userMsg = { role: 'user', content: query };
-        setMessages(prev => [...prev, userMsg]);
+        const userMessage = { role: 'user', content: query };
+        setMessages((prev) => [...prev, userMessage]);
         setQuery('');
         setLoading(true);
 
         try {
-            const res = await axios.post('http://localhost:3000/v1/ask', {
-                query: userMsg.content
-            });
-
-            const aiMsg = {
+            const res = await ask(query, includeGraph);
+            const assistantMessage = {
                 role: 'assistant',
                 content: res.data.answer,
-                snippets: res.data.context_snippets
+                context: res.data.context_snippets,
             };
-            setMessages(prev => [...prev, aiMsg]);
+            setMessages((prev) => [...prev, assistantMessage]);
         } catch (err) {
-            setMessages(prev => [...prev, { role: 'assistant', content: "Sorry, I encountered an error retrieving that information." }]);
+            const errorMessage = {
+                role: 'assistant',
+                content: `Error: ${err.response?.data?.error || err.message || 'Failed to get response'}`,
+                context: [],
+            };
+            setMessages((prev) => [...prev, errorMessage]);
         } finally {
             setLoading(false);
         }
     };
 
+    const clearChat = () => {
+        setMessages([]);
+    };
+
     return (
-        <div className="flex flex-col h-[calc(100vh-6rem)]">
-            <div className="flex-none mb-6">
-                <h2 className="text-2xl font-bold text-white">Semantic Search</h2>
-                <p className="text-muted">Ask questions about your documents using RAG.</p>
+        <div className="h-full flex flex-col">
+            {/* Header */}
+            <div className="p-6 border-b border-border">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-2xl font-bold">Search & Ask</h1>
+                        <p className="text-muted-foreground text-sm">
+                            Query your documents using natural language
+                        </p>
+                    </div>
+                    {messages.length > 0 && (
+                        <button onClick={clearChat} className="btn btn-outline btn-sm">
+                            Clear Chat
+                        </button>
+                    )}
+                </div>
+
+                {/* Options */}
+                <div className="flex items-center gap-4 mt-4">
+                    <label className="flex items-center gap-2 text-sm">
+                        <input
+                            type="checkbox"
+                            checked={includeGraph}
+                            onChange={(e) => setIncludeGraph(e.target.checked)}
+                            className="rounded border-border"
+                        />
+                        Include graph context
+                    </label>
+                </div>
             </div>
 
-            <div className="flex-1 glass-panel rounded-2xl overflow-hidden flex flex-col">
-                {/* Chat Area */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {messages.length === 0 && (
-                        <div className="h-full flex flex-col items-center justify-center text-muted opacity-50">
-                            <SearchIcon size={48} className="mb-4" />
-                            <p>Ask a question to start searching...</p>
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                {messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center">
+                        <div className="p-4 rounded-full bg-muted mb-4">
+                            <SearchIcon className="h-8 w-8 text-muted-foreground" />
                         </div>
-                    )}
-
-                    {messages.map((msg, idx) => (
-                        <motion.div
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            key={idx}
-                            className={clsx(
-                                "flex space-x-4 max-w-4xl",
-                                msg.role === 'user' ? "ml-auto" : "mr-auto"
-                            )}
-                        >
-                            <div className={clsx(
-                                "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1",
-                                msg.role === 'user' ? "bg-primary text-white" : "bg-secondary text-white"
-                            )}>
-                                {msg.role === 'user' ? <UserIcon size={16} /> : <Bot size={16} />}
-                            </div>
-                            <div className="flex-1 space-y-2">
-                                <div className={clsx(
-                                    "p-4 rounded-2xl text-sm leading-relaxed",
-                                    msg.role === 'user'
-                                        ? "bg-primary/20 text-white rounded-tr-none"
-                                        : "bg-surface border border-white/5 text-slate-200 rounded-tl-none shadow-lg"
-                                )}>
-                                    {msg.content}
-                                </div>
-
-                                {msg.snippets && msg.snippets.length > 0 && (
-                                    <div className="grid gap-2 mt-2">
-                                        {msg.snippets.map((snip, i) => (
-                                            <div key={i} className="text-xs p-3 bg-black/40 rounded border border-white/5 text-muted hover:text-slate-300 transition-colors">
-                                                <span className="font-mono text-primary/70 mb-1 block">Context Fragment {i + 1}</span>
-                                                {snip.substring(0, 150)}...
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </motion.div>
-                    ))}
-
-                    {loading && (
-                        <div className="flex space-x-4 max-w-4xl mr-auto">
-                            <div className="w-8 h-8 rounded-lg bg-secondary text-white flex items-center justify-center flex-shrink-0 mt-1">
-                                <Bot size={16} />
-                            </div>
-                            <div className="bg-surface border border-white/5 p-4 rounded-2xl rounded-tl-none text-muted flex items-center space-x-2">
-                                <Loader2 size={16} className="animate-spin" />
-                                <span className="text-xs">Processing query...</span>
-                            </div>
+                        <h2 className="text-lg font-semibold mb-2">Ask a Question</h2>
+                        <p className="text-muted-foreground text-sm max-w-md">
+                            Enter a question below to search your uploaded documents using RAG
+                            (Retrieval-Augmented Generation).
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-6 max-w-lg">
+                            {[
+                                'What are the main topics in my documents?',
+                                'Summarize the key findings',
+                                'What does the document say about...?',
+                                'Find information about...',
+                            ].map((suggestion, i) => (
+                                <button
+                                    key={i}
+                                    onClick={() => setQuery(suggestion)}
+                                    className="text-left p-3 rounded-lg border border-border hover:bg-accent hover:text-accent-foreground transition-colors text-sm"
+                                >
+                                    {suggestion}
+                                </button>
+                            ))}
                         </div>
-                    )}
-                    <div ref={messagesEndRef} />
-                </div>
+                    </div>
+                ) : (
+                    messages.map((msg, i) => (
+                        <Message key={i} role={msg.role} content={msg.content} context={msg.context} />
+                    ))
+                )}
 
-                {/* Input Area */}
-                <div className="p-4 border-t border-white/5 bg-black/20 backdrop-blur-md">
-                    <form onSubmit={handleSearch} className="relative max-w-4xl mx-auto">
-                        <input
-                            type="text"
-                            value={query}
-                            onChange={(e) => setQuery(e.target.value)}
-                            placeholder="Ask about your documents..."
-                            className="w-full bg-surface border border-white/10 text-white pl-4 pr-12 py-4 rounded-xl focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all shadow-inner"
-                        />
-                        <button
-                            type="submit"
-                            disabled={loading || !query.trim()}
-                            className="absolute right-2 top-2 p-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            <Send size={20} />
-                        </button>
-                    </form>
-                </div>
+                {/* Loading indicator */}
+                {loading && (
+                    <div className="flex justify-start">
+                        <div className="bg-muted rounded-lg p-4 flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span className="text-sm">Thinking...</span>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Input Area */}
+            <div className="p-6 border-t border-border">
+                <form onSubmit={handleSubmit} className="flex gap-3">
+                    <input
+                        type="text"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="Ask a question about your documents..."
+                        className="input flex-1"
+                        disabled={loading}
+                    />
+                    <button
+                        type="submit"
+                        disabled={!query.trim() || loading}
+                        className="btn btn-primary btn-icon"
+                    >
+                        {loading ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                            <Send className="h-4 w-4" />
+                        )}
+                    </button>
+                </form>
             </div>
         </div>
     );
-};
-
-export default Search;
+}
