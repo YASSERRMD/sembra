@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
-import { Upload as UploadIcon, FileText, X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import { uploadDocument } from '../lib/api';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Upload as UploadIcon, FileText, X, CheckCircle, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
+import { uploadDocument, getDocuments } from '../lib/api';
 
 export default function Documents() {
     const [files, setFiles] = useState([]);
@@ -9,6 +9,24 @@ export default function Documents() {
     const [dragActive, setDragActive] = useState(false);
     const [chunkSize, setChunkSize] = useState(512);
     const [chunkOverlap, setChunkOverlap] = useState(128);
+    const [documents, setDocuments] = useState([]);
+    const [loadingDocs, setLoadingDocs] = useState(true);
+
+    const fetchDocuments = useCallback(async () => {
+        setLoadingDocs(true);
+        try {
+            const res = await getDocuments();
+            setDocuments(res.data || []);
+        } catch {
+            setDocuments([]);
+        } finally {
+            setLoadingDocs(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchDocuments();
+    }, [fetchDocuments]);
 
     const handleDrag = useCallback((e) => {
         e.preventDefault();
@@ -70,6 +88,8 @@ export default function Documents() {
         setResults(uploadResults);
         setUploading(false);
         setFiles([]);
+        // Refresh document list after upload
+        fetchDocuments();
     };
 
     return (
@@ -93,8 +113,8 @@ export default function Documents() {
                             onDragOver={handleDrag}
                             onDrop={handleDrop}
                             className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${dragActive
-                                    ? 'border-primary bg-primary/5'
-                                    : 'border-border hover:border-primary/50'
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border hover:border-primary/50'
                                 }`}
                         >
                             <UploadIcon className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -191,6 +211,46 @@ export default function Documents() {
                                                 <p className="text-xs text-destructive">{result.error}</p>
                                             )}
                                         </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Document Library */}
+                    <div className="card p-6 mt-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-lg font-semibold">Document Library</h2>
+                            <button onClick={fetchDocuments} className="btn btn-outline btn-sm">
+                                <RefreshCw className={`h-4 w-4 mr-1 ${loadingDocs ? 'animate-spin' : ''}`} />
+                                Refresh
+                            </button>
+                        </div>
+
+                        {loadingDocs ? (
+                            <div className="flex items-center justify-center py-8">
+                                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                            </div>
+                        ) : documents.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-8 text-center">
+                                <FileText className="h-12 w-12 text-muted-foreground mb-3" />
+                                <p className="text-muted-foreground text-sm">No documents uploaded yet</p>
+                                <p className="text-xs text-muted-foreground mt-1">Upload a document above to get started</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                {documents.map((doc, i) => (
+                                    <div key={i} className="flex items-center justify-between p-4 rounded-lg border border-border">
+                                        <div className="flex items-center gap-3">
+                                            <FileText className="h-5 w-5 text-primary" />
+                                            <div>
+                                                <p className="text-sm font-medium">{doc.name}</p>
+                                                <p className="text-xs text-muted-foreground">ID: {doc.document_id}</p>
+                                            </div>
+                                        </div>
+                                        <span className="badge badge-secondary text-xs">
+                                            {doc.chunk_count} chunks
+                                        </span>
                                     </div>
                                 ))}
                             </div>

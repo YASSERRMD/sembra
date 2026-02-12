@@ -146,6 +146,40 @@ pub struct SearchResult {
     pub payload: Option<serde_json::Value>,
 }
 
+/// BarqDB raw search response format
+#[derive(Debug, Deserialize)]
+struct BarqSearchResponse {
+    results: Vec<BarqSearchHit>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BarqSearchHit {
+    id: BarqId,
+    score: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BarqId {
+    Tagged { #[serde(rename = "U64")] u64_val: u64 },
+    Plain(u64),
+}
+
+impl BarqId {
+    fn value(&self) -> u64 {
+        match self {
+            BarqId::Tagged { u64_val } => *u64_val,
+            BarqId::Plain(v) => *v,
+        }
+    }
+}
+
+/// BarqDB document response format
+#[derive(Debug, Deserialize)]
+struct BarqDocument {
+    payload: Option<serde_json::Value>,
+}
+
 /// BarqDB Client - connects to BarqDB vector database via REST API
 pub struct BarqDBClient {
     client: reqwest::Client,
@@ -207,6 +241,23 @@ impl BarqDBClient {
         Ok(())
     }
 
+    /// Get a document by ID from a collection (includes payload)
+    pub async fn get_document(&self, collection: &str, id: u64) -> Result<Option<serde_json::Value>> {
+        let url = format!("{}/collections/{}/documents/{}", self.base_url, collection, id);
+
+        let mut req = self.client.get(&url);
+        if let Some(ref key) = self.api_key {
+            req = req.header("Authorization", format!("Bearer {}", key));
+        }
+
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+        let doc: BarqDocument = resp.json().await?;
+        Ok(doc.payload)
+    }
+
     pub async fn search(&self, collection: &str, vector: Vec<f32>, top_k: usize) -> Result<Vec<SearchResult>> {
         let url = format!("{}/collections/{}/search", self.base_url, collection);
         let body = serde_json::json!({ "vector": vector, "top_k": top_k });
@@ -221,7 +272,22 @@ impl BarqDBClient {
             let text = resp.text().await.unwrap_or_default();
             anyhow::bail!("Search failed: {}", text);
         }
-        Ok(resp.json().await?)
+        
+        let raw: BarqSearchResponse = resp.json().await?;
+        
+        // Fetch payloads for each result
+        let mut results = Vec::new();
+        for hit in raw.results {
+            let id = hit.id.value();
+            let payload = self.get_document(collection, id).await.unwrap_or(None);
+            results.push(SearchResult {
+                id,
+                score: hit.score,
+                payload,
+            });
+        }
+        
+        Ok(results)
     }
 
     pub async fn hybrid_search(&self, collection: &str, vector: Vec<f32>, query: &str, top_k: usize) -> Result<Vec<SearchResult>> {
@@ -238,7 +304,21 @@ impl BarqDBClient {
             let text = resp.text().await.unwrap_or_default();
             anyhow::bail!("Hybrid search failed: {}", text);
         }
-        Ok(resp.json().await?)
+        
+        let raw: BarqSearchResponse = resp.json().await?;
+        
+        let mut results = Vec::new();
+        for hit in raw.results {
+            let id = hit.id.value();
+            let payload = self.get_document(collection, id).await.unwrap_or(None);
+            results.push(SearchResult {
+                id,
+                score: hit.score,
+                payload,
+            });
+        }
+        
+        Ok(results)
     }
 
     pub async fn health(&self) -> Result<bool> {

@@ -76,16 +76,22 @@ async fn main() -> anyhow::Result<()> {
         "openai" => {
             let api_key = metadata.get_config("openai_api_key").await.ok().flatten()
                 .unwrap_or_else(|| std::env::var("OPENAI_API_KEY").unwrap_or_default());
-            info!("Using OpenAI Provider (model: {})", model);
+            info!("Using OpenAI Embedding Provider (model: {})", model);
             Arc::new(sembra_core::providers::openai::OpenAIProvider::new(api_key, model))
+        },
+        "cohere" => {
+            let api_key = metadata.get_config("cohere_api_key").await.ok().flatten()
+                .unwrap_or_else(|| std::env::var("COHERE_API_KEY").unwrap_or_default());
+            info!("Using Cohere Embedding Provider (model: {})", model);
+            Arc::new(sembra_core::providers::cohere::CohereEmbeddingProvider::new(api_key, model))
         },
         "ollama" => {
             let base_url = std::env::var("OLLAMA_BASE_URL").unwrap_or("http://localhost:11434".into());
-            info!("Using Ollama Provider (model: {})", model);
+            info!("Using Ollama Embedding Provider (model: {})", model);
             Arc::new(sembra_core::providers::ollama::OllamaProvider::new(base_url, model))
         },
         _ => {
-            info!("Using Mock Provider");
+            info!("Using Mock Embedding Provider (no provider configured)");
             Arc::new(sembra_core::providers::mock::MockProvider::new())
         }
     };
@@ -96,15 +102,54 @@ async fn main() -> anyhow::Result<()> {
     let llm_model = metadata.get_config("llm_model").await.ok().flatten().unwrap_or("gpt-4o".into());
 
     let llm_provider: Arc<dyn sembra_core::providers::llm::LLMProvider> = match llm_type.as_str() {
+        "openai" => {
+            let api_key = metadata.get_config("openai_api_key").await.ok().flatten()
+                .unwrap_or_else(|| std::env::var("OPENAI_API_KEY").unwrap_or_default());
+            info!("Using OpenAI LLM Provider ({})", llm_model);
+            Arc::new(sembra_core::providers::llm::OpenAILLMProvider::new(api_key, llm_model))
+        },
+        "anthropic" => {
+            let api_key = metadata.get_config("anthropic_api_key").await.ok().flatten()
+                .unwrap_or_else(|| std::env::var("ANTHROPIC_API_KEY").unwrap_or_default());
+            let base_url = metadata.get_config("anthropic_base_url").await.ok().flatten();
+            info!("Using Anthropic LLM Provider ({})", llm_model);
+            if let Some(url) = base_url {
+                Arc::new(sembra_core::providers::anthropic::AnthropicLLMProvider::with_base_url(api_key, llm_model, url))
+            } else {
+                Arc::new(sembra_core::providers::anthropic::AnthropicLLMProvider::new(api_key, llm_model))
+            }
+        },
+        "groq" => {
+            let api_key = metadata.get_config("groq_api_key").await.ok().flatten()
+                .unwrap_or_else(|| std::env::var("GROQ_API_KEY").unwrap_or_default());
+            let base_url = metadata.get_config("groq_base_url").await.ok().flatten();
+            info!("Using Groq LLM Provider ({})", llm_model);
+            if let Some(url) = base_url {
+                Arc::new(sembra_core::providers::groq::GroqLLMProvider::with_base_url(api_key, llm_model, url))
+            } else {
+                Arc::new(sembra_core::providers::groq::GroqLLMProvider::new(api_key, llm_model))
+            }
+        },
+        "cohere" => {
+            let api_key = metadata.get_config("cohere_api_key").await.ok().flatten()
+                .unwrap_or_else(|| std::env::var("COHERE_API_KEY").unwrap_or_default());
+            let base_url = metadata.get_config("cohere_base_url").await.ok().flatten();
+            info!("Using Cohere LLM Provider ({})", llm_model);
+            if let Some(url) = base_url {
+                Arc::new(sembra_core::providers::cohere::CohereLLMProvider::with_base_url(api_key, llm_model, url))
+            } else {
+                Arc::new(sembra_core::providers::cohere::CohereLLMProvider::new(api_key, llm_model))
+            }
+        },
         "ollama" => {
-            let base_url = std::env::var("OLLAMA_BASE_URL").unwrap_or("http://localhost:11434".into());
+            let base_url = metadata.get_config("ollama_base_url").await.ok().flatten()
+                .unwrap_or_else(|| std::env::var("OLLAMA_BASE_URL").unwrap_or("http://localhost:11434".into()));
             info!("Using Ollama LLM Provider ({})", llm_model);
             Arc::new(sembra_core::providers::llm::OllamaLLMProvider::new(base_url, llm_model))
         },
         _ => {
-            let api_key = metadata.get_config("openai_api_key").await.ok().flatten()
-                .unwrap_or_else(|| std::env::var("OPENAI_API_KEY").unwrap_or_default());
-            info!("Using OpenAI LLM Provider ({})", llm_model);
+            let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+            info!("Using OpenAI LLM Provider as default ({})", llm_model);
             Arc::new(sembra_core::providers::llm::OpenAILLMProvider::new(api_key, llm_model))
         }
     };

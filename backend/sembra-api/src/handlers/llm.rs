@@ -130,27 +130,15 @@ pub async fn ask(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Embedding failed: {}", e)))?;
 
     // 2. Retrieve from BarqDB (Vector Search)
-    // Assuming BarqDBClient has a search method.
-    // I need to check `sembra-storage/src/lib.rs` to see `BarqDBClient` methods.
-    // In Phase 0 walkthrough it mentioned `BarqDBClient` exists.
-    // I previously used `vector_db.insert`, I need to use `search`.
-    
-    // Placeholder for search (I will check method signature later if this fails to compile)
-    // Actually, I should check it now.
-    // `sembra_storage::SearchResult` exists.
-    
-    // 3. Construct Context
     let mut context_text = String::new();
     let mut snippets = Vec::new();
     
-    // Mock search for now if method not obvious, but let's try `search`.
     let results = state_read.vector_db.search("sembra_chunks", embedding, 5).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Vector search failed: {}", e)))?;
 
+    tracing::info!("Search returned {} results for query: {}", results.len(), &payload.query);
+
     for res in results {
-         // res provided by seems-storage?
-         // Need to extract text from payload.
-         // Assuming payload is serde_json::Value
          if let Some(text) = res.payload.as_ref().and_then(|p| p.get("text")).and_then(|t| t.as_str()) {
              context_text.push_str(text);
              context_text.push_str("\n---\n");

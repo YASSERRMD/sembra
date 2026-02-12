@@ -74,8 +74,8 @@ impl BarqGraphDBClient {
     pub async fn add_edge(&self, source: u64, target: u64, edge_type: &str) -> Result<()> {
         let url = format!("{}/edges", self.base_url);
         let body = serde_json::json!({
-            "source": source,
-            "target": target,
+            "from": source,
+            "to": target,
             "edge_type": edge_type
         });
 
@@ -148,6 +148,20 @@ impl BarqGraphDBClient {
 
         let results: Vec<HybridResult> = resp.json().await?;
         Ok(results)
+    }
+
+    /// Get all nodes with a given label
+    pub async fn get_nodes_by_label(&self, label: &str) -> Result<Vec<GraphNode>> {
+        let url = format!("{}/nodes?label={}", self.base_url, label);
+        let resp = self.client.get(&url).send().await?;
+        
+        if !resp.status().is_success() {
+            // If the endpoint doesn't exist or returns error, return empty
+            return Ok(vec![]);
+        }
+
+        let nodes: Vec<GraphNode> = resp.json().await.unwrap_or_default();
+        Ok(nodes)
     }
 
     /// Health check

@@ -105,4 +105,12 @@ impl CelrixCache {
 
         Ok(None)
     }
+
+    /// Check health by attempting connection
+    pub async fn health(&self) -> Result<bool> {
+        match TcpStream::connect(&self.connection_string).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
 }
