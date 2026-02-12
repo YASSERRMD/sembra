@@ -341,7 +341,7 @@ pub async fn retrieve_handler(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
-    let results = state.vector_db.hybrid_search("sembra_chunks", vector, &req.query, req.top_k.unwrap_or(5)).await
+    let results = state.vector_db.search("sembra_chunks", vector, req.top_k.unwrap_or(5)).await
         .map_err(|e| {
              tracing::error!("Search failed: {}", e);
              StatusCode::INTERNAL_SERVER_ERROR

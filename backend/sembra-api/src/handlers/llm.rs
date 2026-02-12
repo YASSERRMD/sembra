@@ -129,12 +129,12 @@ pub async fn ask(
     let embedding = state_read.embedding_provider.embed_query(&payload.query).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Embedding failed: {}", e)))?;
 
-    // 2. Retrieve from BarqDB (Hybrid Search: Vector + BM25)
+    // 2. Retrieve from BarqDB (Vector Search)
     let mut context_text = String::new();
     let mut snippets = Vec::new();
     
-    let results = state_read.vector_db.hybrid_search("sembra_chunks", embedding, &payload.query, 5).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Hybrid search failed: {}", e)))?;
+    let results = state_read.vector_db.search("sembra_chunks", embedding, 5).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Vector search failed: {}", e)))?;
 
     tracing::info!("Search returned {} results for query: {}", results.len(), &payload.query);
 
