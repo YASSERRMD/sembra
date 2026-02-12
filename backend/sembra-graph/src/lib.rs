@@ -150,6 +150,20 @@ impl BarqGraphDBClient {
         Ok(results)
     }
 
+    /// Get all nodes with a given label
+    pub async fn get_nodes_by_label(&self, label: &str) -> Result<Vec<GraphNode>> {
+        let url = format!("{}/nodes?label={}", self.base_url, label);
+        let resp = self.client.get(&url).send().await?;
+        
+        if !resp.status().is_success() {
+            // If the endpoint doesn't exist or returns error, return empty
+            return Ok(vec![]);
+        }
+
+        let nodes: Vec<GraphNode> = resp.json().await.unwrap_or_default();
+        Ok(nodes)
+    }
+
     /// Health check
     pub async fn health(&self) -> Result<bool> {
         let url = format!("{}/health", self.base_url);

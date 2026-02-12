@@ -122,15 +122,26 @@ pub async fn upload_handler(
     let chunk_count = chunks.len();
     info!("Created {} chunks (size={}, overlap={})", chunk_count, chunk_size, chunk_overlap);
     
-    // Store chunks in BarqDB
+    // Generate real embeddings for all chunks using the configured embedding provider
     let state_guard = state.read().await;
     
-    // Ensure collection exists
-    state_guard.vector_db.create_collection("sembra_chunks", 384, "cosine").await.ok();
+    let chunk_texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
+    let embeddings = state_guard.embedding_provider.embed_documents(&chunk_texts).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, format!("Embedding generation failed: {}", e)))?;
     
-    for chunk in &chunks {
+    let embed_dim = embeddings.first().map(|v| v.len()).unwrap_or(384);
+    info!("Generated {} embeddings (dim={})", embeddings.len(), embed_dim);
+    
+    // Ensure collection exists in BarqDB with the correct dimension
+    if let Err(e) = state_guard.vector_db.create_collection("sembra_chunks", embed_dim, "cosine").await {
+        tracing::warn!("Collection create (may already exist): {}", e);
+    }
+    
+    // Store chunks with real embeddings in BarqDB
+    let mut insert_errors = 0;
+    for (i, chunk) in chunks.iter().enumerate() {
         let chunk_id_u64 = hash_to_u64(&chunk.chunk_id);
-        let vector = vec![0.0f32; 384];
+        let vector = embeddings.get(i).cloned().unwrap_or_else(|| vec![0.0f32; embed_dim]);
         
         let payload = serde_json::json!({
             "document_id": document_id,
@@ -139,39 +150,56 @@ pub async fn upload_handler(
             "sequence_num": chunk.sequence_num,
             "start_position": chunk.start_position,
             "end_position": chunk.end_position,
-            "status": "pending_embedding"
+            "status": "embedded"
         });
         
-        state_guard.vector_db.insert("sembra_chunks", chunk_id_u64, vector, payload).await.ok();
+        if let Err(e) = state_guard.vector_db.insert("sembra_chunks", chunk_id_u64, vector, payload).await {
+            tracing::error!("Failed to insert chunk {} into BarqDB: {}", chunk.chunk_id, e);
+            insert_errors += 1;
+        }
+    }
+    
+    if insert_errors > 0 {
+        tracing::error!("{}/{} chunks failed to insert into BarqDB", insert_errors, chunk_count);
+    } else {
+        info!("Successfully stored {} chunks with embeddings in BarqDB", chunk_count);
     }
     
     // Create graph relationships
     let doc_id_u64 = hash_to_u64(&document_id);
-    state_guard.graph_db.add_node(doc_id_u64, "Document", serde_json::json!({
+    if let Err(e) = state_guard.graph_db.add_node(doc_id_u64, "Document", serde_json::json!({
         "document_id": document_id,
         "name": document_name,
         "chunk_count": chunk_count
-    })).await.ok();
+    })).await {
+        tracing::error!("Failed to add Document node to GraphDB: {}", e);
+    }
     
     for (i, chunk) in chunks.iter().enumerate() {
         let chunk_id_u64 = hash_to_u64(&chunk.chunk_id);
         
-        state_guard.graph_db.add_node(chunk_id_u64, "Chunk", serde_json::json!({
+        if let Err(e) = state_guard.graph_db.add_node(chunk_id_u64, "Chunk", serde_json::json!({
             "chunk_id": chunk.chunk_id,
             "sequence_num": chunk.sequence_num
-        })).await.ok();
+        })).await {
+            tracing::error!("Failed to add Chunk node to GraphDB: {}", e);
+        }
         
-        state_guard.graph_db.add_edge(chunk_id_u64, doc_id_u64, "BELONGS_TO").await.ok();
+        if let Err(e) = state_guard.graph_db.add_edge(chunk_id_u64, doc_id_u64, "BELONGS_TO").await {
+            tracing::error!("Failed to add BELONGS_TO edge: {}", e);
+        }
         
         if i > 0 {
             let prev_chunk_id = hash_to_u64(&chunks[i-1].chunk_id);
-            state_guard.graph_db.add_edge(prev_chunk_id, chunk_id_u64, "NEXT_CHUNK").await.ok();
+            if let Err(e) = state_guard.graph_db.add_edge(prev_chunk_id, chunk_id_u64, "NEXT_CHUNK").await {
+                tracing::error!("Failed to add NEXT_CHUNK edge: {}", e);
+            }
         }
     }
     
     info!("Stored {} chunks with graph relationships", chunk_count);
     
-    // Push to AiMesh queue for embedding
+    // Also publish to AiMesh queue for any additional background processing
     match sembra_core::aimesh::AiMeshConsumer::from_env().await {
         Ok(consumer) => {
             let messages: Vec<sembra_core::aimesh::ChunkMessage> = chunks.iter().map(|c| {
@@ -189,14 +217,13 @@ pub async fn upload_handler(
             }).collect();
             
             if let Err(e) = consumer.publish_batch(&messages).await {
-                tracing::error!("Failed to publish chunks to AiMesh: {}", e);
-                // We don't fail the upload, but background worker won't pick it up
+                tracing::warn!("Failed to publish chunks to AiMesh (non-critical): {}", e);
             } else {
                 info!("Published {} chunks to AiMesh queue", messages.len());
             }
         },
         Err(e) => {
-            tracing::error!("Failed to connect to AiMesh: {}", e);
+            tracing::warn!("AiMesh not available (non-critical): {}", e);
         }
     }
     

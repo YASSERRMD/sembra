@@ -17,8 +17,17 @@ const EMBEDDING_PROVIDERS = [
 ];
 
 function ProviderCard({ title, icon: Icon, providers, type, currentConfig, onSave }) {
-    const [provider, setProvider] = useState(currentConfig?.provider || providers[0].id);
-    const [model, setModel] = useState(currentConfig?.model || providers[0].models[0]);
+    // Determine initial state from saved config
+    const savedProvider = type === 'llm' ? currentConfig?.llm?.provider : currentConfig?.embedding?.provider;
+    const savedModel = type === 'llm' ? currentConfig?.llm?.model : currentConfig?.embedding?.model;
+
+    const initialProvider = (savedProvider && savedProvider !== 'not configured')
+        ? savedProvider : providers[0].id;
+    const initialModel = (savedModel && savedModel !== 'not configured')
+        ? savedModel : providers[0].models[0];
+
+    const [provider, setProvider] = useState(initialProvider);
+    const [model, setModel] = useState(initialModel);
     const [apiKey, setApiKey] = useState('');
     const [baseUrl, setBaseUrl] = useState('');
     const [saving, setSaving] = useState(false);
@@ -26,8 +35,20 @@ function ProviderCard({ title, icon: Icon, providers, type, currentConfig, onSav
 
     const selectedProvider = providers.find(p => p.id === provider);
 
+    // When currentConfig loads, update the form
     useEffect(() => {
-        setModel(selectedProvider?.models[0] || '');
+        if (currentConfig) {
+            const sp = type === 'llm' ? currentConfig?.llm?.provider : currentConfig?.embedding?.provider;
+            const sm = type === 'llm' ? currentConfig?.llm?.model : currentConfig?.embedding?.model;
+            if (sp && sp !== 'not configured') setProvider(sp);
+            if (sm && sm !== 'not configured') setModel(sm);
+        }
+    }, [currentConfig]);
+
+    useEffect(() => {
+        if (!currentConfig) {
+            setModel(selectedProvider?.models[0] || '');
+        }
         setBaseUrl(provider === 'ollama' ? 'http://localhost:11434' : '');
     }, [provider]);
 
@@ -57,13 +78,33 @@ function ProviderCard({ title, icon: Icon, providers, type, currentConfig, onSav
         }
     };
 
+    // Determine if currently configured
+    const isConfigured = savedProvider && savedProvider !== 'not configured';
+
     return (
         <div className="card p-6">
-            <div className="flex items-center gap-3 mb-6">
+            <div className="flex items-center gap-3 mb-2">
                 <div className="p-2 rounded-lg bg-primary/10">
                     <Icon className="h-5 w-5 text-primary" />
                 </div>
                 <h2 className="text-lg font-semibold">{title}</h2>
+            </div>
+
+            {/* Current Status Badge */}
+            <div className="mb-6">
+                {isConfigured ? (
+                    <div className="flex items-center gap-2 p-2 rounded-lg bg-green-500/10 text-green-500">
+                        <CheckCircle className="h-4 w-4" />
+                        <span className="text-xs font-medium">
+                            Active: {savedProvider} / {savedModel}
+                        </span>
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-2 p-2 rounded-lg bg-yellow-500/10 text-yellow-500">
+                        <AlertCircle className="h-4 w-4" />
+                        <span className="text-xs font-medium">Not configured</span>
+                    </div>
+                )}
             </div>
 
             <div className="space-y-4">
@@ -173,7 +214,7 @@ function ProviderCard({ title, icon: Icon, providers, type, currentConfig, onSav
                         ) : (
                             <AlertCircle className="h-4 w-4" />
                         )}
-                        <span className="text-sm">{result.message}</span>
+                        <span className="text-sm">{typeof result.message === 'string' ? result.message : JSON.stringify(result.message)}</span>
                     </div>
                 )}
             </div>
@@ -183,18 +224,31 @@ function ProviderCard({ title, icon: Icon, providers, type, currentConfig, onSav
 
 export default function Settings() {
     const [currentConfig, setCurrentConfig] = useState(null);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        getConfig()
-            .then((res) => setCurrentConfig(res.data))
-            .catch(() => { });
+        fetchConfig();
     }, []);
 
-    const refetchConfig = () => {
+    const fetchConfig = () => {
+        setLoading(true);
         getConfig()
-            .then((res) => setCurrentConfig(res.data))
-            .catch(() => { });
+            .then((res) => {
+                setCurrentConfig(res.data);
+                setLoading(false);
+            })
+            .catch(() => {
+                setLoading(false);
+            });
     };
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center h-full">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+        );
+    }
 
     return (
         <div className="p-8">
@@ -212,7 +266,7 @@ export default function Settings() {
                     providers={LLM_PROVIDERS}
                     type="llm"
                     currentConfig={currentConfig}
-                    onSave={refetchConfig}
+                    onSave={fetchConfig}
                 />
                 <ProviderCard
                     title="Embedding Provider"
@@ -220,26 +274,30 @@ export default function Settings() {
                     providers={EMBEDDING_PROVIDERS}
                     type="embedding"
                     currentConfig={currentConfig}
-                    onSave={refetchConfig}
+                    onSave={fetchConfig}
                 />
             </div>
 
-            {/* Current Config Info */}
+            {/* Current Config Summary */}
             {currentConfig && (
                 <div className="mt-6 card p-6">
-                    <h2 className="text-lg font-semibold mb-4">Current Configuration</h2>
+                    <h2 className="text-lg font-semibold mb-4">System Configuration</h2>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                         <div>
-                            <span className="text-muted-foreground">Status:</span>
-                            <p className="font-medium">{currentConfig.status}</p>
+                            <span className="text-muted-foreground">LLM Provider:</span>
+                            <p className="font-medium">{currentConfig.llm?.provider || 'Not set'}</p>
                         </div>
                         <div>
-                            <span className="text-muted-foreground">Provider:</span>
-                            <p className="font-medium">{currentConfig.provider}</p>
+                            <span className="text-muted-foreground">LLM Model:</span>
+                            <p className="font-medium">{currentConfig.llm?.model || 'Not set'}</p>
                         </div>
                         <div>
-                            <span className="text-muted-foreground">Model:</span>
-                            <p className="font-medium">{currentConfig.model}</p>
+                            <span className="text-muted-foreground">Embedding Provider:</span>
+                            <p className="font-medium">{currentConfig.embedding?.provider || 'Not set'}</p>
+                        </div>
+                        <div>
+                            <span className="text-muted-foreground">Embedding Model:</span>
+                            <p className="font-medium">{currentConfig.embedding?.model || 'Not set'}</p>
                         </div>
                     </div>
                 </div>

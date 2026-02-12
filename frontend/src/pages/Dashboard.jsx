@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, Database, FileText, Cpu, HardDrive, Zap } from 'lucide-react';
-import { getStatus, getHealth } from '../lib/api';
+import { Activity, Database, FileText, Cpu, HardDrive, Zap, Network, Radio } from 'lucide-react';
+import { getStatus, getHealth, getConfig } from '../lib/api';
 
 function StatCard({ icon: Icon, title, value, status, description }) {
     return (
@@ -40,17 +40,20 @@ function ComponentCard({ name, status }) {
 export default function Dashboard() {
     const [status, setStatus] = useState(null);
     const [health, setHealth] = useState(null);
+    const [config, setConfig] = useState(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [statusRes, healthRes] = await Promise.all([
+                const [statusRes, healthRes, configRes] = await Promise.all([
                     getStatus().catch(() => ({ data: { total_chunks: 0, components: {} } })),
                     getHealth().catch(() => ({ data: { status: 'unknown' } })),
+                    getConfig().catch(() => ({ data: null })),
                 ]);
                 setStatus(statusRes.data);
                 setHealth(healthRes.data);
+                setConfig(configRes.data);
             } catch (err) {
                 console.error('Failed to fetch status:', err);
             } finally {
@@ -86,7 +89,7 @@ export default function Dashboard() {
                     icon={FileText}
                     title="Total Chunks"
                     value={status?.total_chunks || 0}
-                    description="Documents indexed"
+                    description="Documents indexed in BarqDB"
                 />
                 <StatCard
                     icon={Activity}
@@ -95,27 +98,28 @@ export default function Dashboard() {
                     status={health?.status}
                 />
                 <StatCard
-                    icon={Database}
-                    title="Vector DB"
-                    value={components.barq_db || 'Unknown'}
-                    status={components.barq_db}
+                    icon={Cpu}
+                    title="LLM Provider"
+                    value={config?.llm?.provider || 'Not configured'}
+                    description={config?.llm?.model || ''}
                 />
                 <StatCard
                     icon={Zap}
-                    title="Cache"
-                    value={components.cache || 'Unknown'}
-                    status={components.cache}
+                    title="Embedding Provider"
+                    value={config?.embedding?.provider || 'Not configured'}
+                    description={config?.embedding?.model || ''}
                 />
             </div>
 
             {/* Components Health */}
             <div className="card p-6">
                 <h2 className="text-lg font-semibold mb-4">Infrastructure Health</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <ComponentCard name="PostgreSQL" status={components.postgres || health?.postgres || 'Unknown'} />
-                    <ComponentCard name="BarqDB" status={components.barq_db || health?.barq_db || 'Unknown'} />
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <ComponentCard name="PostgreSQL" status={components.postgres || 'Unknown'} />
+                    <ComponentCard name="BarqDB (Vector)" status={components.barq_db || 'Unknown'} />
                     <ComponentCard name="GraphDB" status={components.graph_db || 'Unknown'} />
-                    <ComponentCard name="Cache (Celrix)" status={components.cache || health?.cache || 'Unknown'} />
+                    <ComponentCard name="Cache (Celrix)" status={components.cache || 'Unknown'} />
+                    <ComponentCard name="AiMesh" status={components.aimesh || 'Unknown'} />
                 </div>
             </div>
         </div>

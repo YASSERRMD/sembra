@@ -137,8 +137,13 @@ pub async fn status_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl 
     // Check AiMesh connection
     let aimesh_ok = sembra_core::aimesh::AiMeshConsumer::from_env().await.is_ok();
     
+    // Get actual chunk count from BarqDB
+    let total_chunks = state.vector_db.search("sembra_chunks", vec![0.0f32; 384], 10000).await
+        .map(|r| r.len() as u64)
+        .unwrap_or(0);
+    
     Json(StatusResponse {
-        total_chunks: 0, // Placeholder
+        total_chunks,
         components: ComponentStatus {
             postgres: if pg_ok { "Connected".into() } else { "Error".into() },
             barq_db: if barq_ok { "Connected".into() } else { "Error".into() },
@@ -165,18 +170,72 @@ pub struct EmbeddingConfigResponse {
     pub model: String,
 }
 
+#[derive(Serialize)]
+pub struct FullConfigResponse {
+    pub embedding: EmbeddingConfigResponse,
+    pub llm: LLMConfigInfo,
+    pub documents: u64,
+}
+
+#[derive(Serialize)]
+pub struct LLMConfigInfo {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Serialize)]
+pub struct DocumentInfo {
+    pub document_id: String,
+    pub name: String,
+    pub chunk_count: u64,
+}
+
 pub async fn config_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl IntoResponse {
     let state = state.read().await;
-    let provider = state.metadata.get_config("embedding_provider").await
-        .ok().flatten().unwrap_or_else(|| "mock".into());
-    let model = state.metadata.get_config("embedding_model").await
-        .ok().flatten().unwrap_or_else(|| "default".into());
+    let emb_provider = state.metadata.get_config("embedding_provider").await
+        .ok().flatten().unwrap_or_else(|| "not configured".into());
+    let emb_model = state.metadata.get_config("embedding_model").await
+        .ok().flatten().unwrap_or_else(|| "not configured".into());
+    let llm_provider = state.metadata.get_config("llm_provider").await
+        .ok().flatten().unwrap_or_else(|| "not configured".into());
+    let llm_model = state.metadata.get_config("llm_model").await
+        .ok().flatten().unwrap_or_else(|| "not configured".into());
     
-    Json(EmbeddingConfigResponse {
-        status: "active".into(),
-        provider,
-        model,
+    let total_chunks = state.vector_db.search("sembra_chunks", vec![0.0f32; 384], 10000).await
+        .map(|r| r.len() as u64)
+        .unwrap_or(0);
+    
+    Json(FullConfigResponse {
+        embedding: EmbeddingConfigResponse {
+            status: "active".into(),
+            provider: emb_provider,
+            model: emb_model,
+        },
+        llm: LLMConfigInfo {
+            provider: llm_provider,
+            model: llm_model,
+        },
+        documents: total_chunks,
     })
+}
+
+pub async fn documents_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl IntoResponse {
+    let state = state.read().await;
+    
+    // Query graph for Document nodes
+    let docs = state.graph_db.get_nodes_by_label("Document").await
+        .unwrap_or_default();
+    
+    let doc_list: Vec<DocumentInfo> = docs.iter().filter_map(|node| {
+        let props = &node.properties;
+        Some(DocumentInfo {
+            document_id: props.get("document_id")?.as_str()?.to_string(),
+            name: props.get("name")?.as_str()?.to_string(),
+            chunk_count: props.get("chunk_count").and_then(|v| v.as_u64()).unwrap_or(0),
+        })
+    }).collect();
+    
+    Json(doc_list)
 }
 
 pub async fn configure_embedding_handler(
@@ -321,6 +380,7 @@ pub fn create_router(state: Arc<RwLock<AppState>>) -> Router {
         .route("/health", get(health_handler))
         .route("/v1/status", get(status_handler))
         .route("/v1/config", get(config_handler))
+        .route("/v1/documents", get(documents_handler))
         .route("/v1/configure-embedding", post(configure_embedding_handler))
         .route("/v1/ingest", post(ingest_handler))
         .route("/v1/retrieve", post(retrieve_handler))
