@@ -244,6 +244,7 @@ impl BarqDBClient {
     /// Get a document by ID from a collection (includes payload)
     pub async fn get_document(&self, collection: &str, id: u64) -> Result<Option<serde_json::Value>> {
         let url = format!("{}/collections/{}/documents/{}", self.base_url, collection, id);
+        // eprintln!("Fetching document: {}", url);
 
         let mut req = self.client.get(&url);
         if let Some(ref key) = self.api_key {
@@ -252,10 +253,36 @@ impl BarqDBClient {
 
         let resp = req.send().await?;
         if !resp.status().is_success() {
+            let status = resp.status();
+            eprintln!("get_document failed: status={}", status);
             return Ok(None);
         }
-        let doc: BarqDocument = resp.json().await?;
-        Ok(doc.payload)
+        
+        let text = resp.text().await?;
+        
+        // Parse as generic Value
+        let doc: serde_json::Value = match serde_json::from_str(&text) {
+             Ok(d) => d,
+             Err(e) => {
+                 eprintln!("get_document failed deserialization: {} | Text: {}", e, text);
+                 return Err(e.into());
+             }
+        };
+        
+        // Extract payload: Handle wrapping { "document": { "payload": ... } } or direct { "payload": ... }
+        let payload_opt = if let Some(inner) = doc.get("document") {
+            inner.get("payload")
+        } else {
+            doc.get("payload")
+        };
+
+        if let Some(payload) = payload_opt {
+            Ok(Some(payload.clone()))
+        } else {
+            // Only log if we expected a payload but found none (and it's not a search result wrapper)
+            // eprintln!("get_document json has no 'payload' field! JSON: {}", doc);
+            Ok(None)
+        }
     }
 
     pub async fn search(&self, collection: &str, vector: Vec<f32>, top_k: usize) -> Result<Vec<SearchResult>> {
@@ -274,17 +301,39 @@ impl BarqDBClient {
         }
         
         let raw: BarqSearchResponse = resp.json().await?;
+        eprintln!("Search returned {} raw results", raw.results.len());
         
         // Fetch payloads for each result
         let mut results = Vec::new();
         for hit in raw.results {
             let id = hit.id.value();
-            let payload = self.get_document(collection, id).await.unwrap_or(None);
-            results.push(SearchResult {
-                id,
-                score: hit.score,
-                payload,
-            });
+            match self.get_document(collection, id).await {
+                Ok(Some(payload)) => {
+                    results.push(SearchResult {
+                        id,
+                        score: hit.score,
+                        payload: Some(payload),
+                    });
+                },
+                Ok(None) => {
+                    eprintln!("get_document returned None for id {}", id);
+                    results.push(SearchResult {
+                        id,
+                        score: hit.score,
+                        payload: None,
+                    });
+                },
+                Err(e) => {
+                    eprintln!("get_document errored for id {}: {}", id, e);
+                    // Decide whether to push with None or skip
+                    // Current behavior was unwrap_or(None) which pushes with None
+                    results.push(SearchResult {
+                        id,
+                        score: hit.score,
+                        payload: None,
+                    });
+                }
+            }
         }
         
         Ok(results)
