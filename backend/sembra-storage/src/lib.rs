@@ -1,6 +1,6 @@
 //! SEMBRA Storage Layer - Hybrid Storage (Postgres + BarqDB)
 //!
-//! - `MetadataStore`: Postgres for Auth, Config, Tenants (SQL)
+//! - `MetadataStore`: Postgres for Auth, Config, Tenants, Documents (SQL)
 //! - `BarqDBClient`: BarqDB for Vector Storage (HTTP)
 
 use anyhow::Result;
@@ -76,6 +76,28 @@ impl MetadataStore {
             )"
         ).execute(&self.pool).await?;
 
+        // Documents table
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS documents (
+                document_id VARCHAR(255) PRIMARY KEY,
+                name VARCHAR(512) NOT NULL,
+                chunk_count INTEGER NOT NULL DEFAULT 0,
+                total_chars INTEGER NOT NULL DEFAULT 0,
+                status VARCHAR(50) NOT NULL DEFAULT 'processing',
+                created_at BIGINT NOT NULL
+            )"
+        ).execute(&self.pool).await?;
+
+        // Document chunks mapping table (for deletion)
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS document_chunks (
+                id SERIAL PRIMARY KEY,
+                document_id VARCHAR(255) NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,
+                chunk_id BIGINT NOT NULL,
+                graph_node_id BIGINT
+            )"
+        ).execute(&self.pool).await?;
+
         Ok(())
     }
 
@@ -120,11 +142,74 @@ impl MetadataStore {
         Ok(row.map(|r| r.0))
     }
 
+    // ---- Document Operations ----
+
+    pub async fn insert_document(&self, document_id: &str, name: &str, chunk_count: i32, total_chars: i32) -> Result<()> {
+        let ts = chrono::Utc::now().timestamp_millis();
+        sqlx::query(
+            "INSERT INTO documents (document_id, name, chunk_count, total_chars, status, created_at)
+             VALUES ($1, $2, $3, $4, 'ready', $5)
+             ON CONFLICT(document_id) DO UPDATE SET name = EXCLUDED.name, chunk_count = EXCLUDED.chunk_count,
+             total_chars = EXCLUDED.total_chars, status = EXCLUDED.status"
+        )
+        .bind(document_id).bind(name).bind(chunk_count).bind(total_chars).bind(ts)
+        .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn insert_document_chunk(&self, document_id: &str, chunk_id: u64, graph_node_id: Option<u64>) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO document_chunks (document_id, chunk_id, graph_node_id) VALUES ($1, $2, $3)"
+        )
+        .bind(document_id).bind(chunk_id as i64).bind(graph_node_id.map(|id| id as i64))
+        .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn list_documents(&self) -> Result<Vec<DocumentRecord>> {
+        let docs = sqlx::query_as::<_, DocumentRecord>(
+            "SELECT document_id, name, chunk_count, total_chars, status, created_at FROM documents ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(docs)
+    }
+
+    pub async fn get_document_chunk_ids(&self, document_id: &str) -> Result<Vec<(i64, Option<i64>)>> {
+        let rows: Vec<(i64, Option<i64>)> = sqlx::query_as(
+            "SELECT chunk_id, graph_node_id FROM document_chunks WHERE document_id = $1"
+        )
+        .bind(document_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn delete_document(&self, document_id: &str) -> Result<bool> {
+        // Cascading delete will also remove document_chunks rows
+        let result = sqlx::query("DELETE FROM documents WHERE document_id = $1")
+            .bind(document_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Health check
     pub async fn health(&self) -> Result<bool> {
         sqlx::query("SELECT 1").execute(&self.pool).await?;
         Ok(true)
     }
+}
+
+/// Document metadata stored in Postgres
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DocumentRecord {
+    pub document_id: String,
+    pub name: String,
+    pub chunk_count: i32,
+    pub total_chars: i32,
+    pub status: String,
+    pub created_at: i64,
 }
 
 // ==================== BarqDB Vector Store ====================
@@ -368,6 +453,23 @@ impl BarqDBClient {
         }
         
         Ok(results)
+    }
+
+    pub async fn delete_document(&self, collection: &str, id: u64) -> Result<()> {
+        let url = format!("{}/collections/{}/documents/{}", self.base_url, collection, id);
+        
+        let mut req = self.client.delete(&url);
+        if let Some(ref key) = self.api_key {
+            req = req.header("Authorization", format!("Bearer {}", key));
+        }
+
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to delete document {}: {} - {}", id, status, text);
+        }
+        Ok(())
     }
 
     pub async fn health(&self) -> Result<bool> {

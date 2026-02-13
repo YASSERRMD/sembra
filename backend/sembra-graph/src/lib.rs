@@ -164,6 +164,18 @@ impl BarqGraphDBClient {
         Ok(nodes)
     }
 
+    /// Delete a node from the graph
+    pub async fn delete_node(&self, id: u64) -> Result<()> {
+        let url = format!("{}/nodes/{}", self.base_url, id);
+        let resp = self.client.delete(&url).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to delete node {}: {} - {}", id, status, text);
+        }
+        Ok(())
+    }
+
     /// Health check
     pub async fn health(&self) -> Result<bool> {
         let url = format!("{}/health", self.base_url);

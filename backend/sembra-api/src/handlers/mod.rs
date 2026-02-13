@@ -1,8 +1,8 @@
 use axum::{
-    extract::{State, Json},
+    extract::{State, Json, Path},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, post, delete},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -191,7 +191,10 @@ pub struct LLMConfigInfo {
 pub struct DocumentInfo {
     pub document_id: String,
     pub name: String,
-    pub chunk_count: u64,
+    pub chunk_count: i32,
+    pub total_chars: i32,
+    pub status: String,
+    pub created_at: i64,
 }
 
 pub async fn config_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl IntoResponse {
@@ -230,20 +233,87 @@ pub async fn config_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl 
 pub async fn documents_handler(State(state): State<Arc<RwLock<AppState>>>) -> impl IntoResponse {
     let state = state.read().await;
     
-    // Query graph for Document nodes
-    let docs = state.graph_db.get_nodes_by_label("Document").await
-        .unwrap_or_default();
+    // Query Postgres for document metadata
+    match state.metadata.list_documents().await {
+        Ok(docs) => {
+            let doc_list: Vec<DocumentInfo> = docs.into_iter().map(|d| DocumentInfo {
+                document_id: d.document_id,
+                name: d.name,
+                chunk_count: d.chunk_count,
+                total_chars: d.total_chars,
+                status: d.status,
+                created_at: d.created_at,
+            }).collect();
+            (StatusCode::OK, Json(serde_json::json!(doc_list))).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to list documents: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Failed to list documents"}))).into_response()
+        }
+    }
+}
+
+pub async fn delete_document_handler(
+    State(state): State<Arc<RwLock<AppState>>>,
+    Path(document_id): Path<String>,
+) -> impl IntoResponse {
+    let state = state.read().await;
     
-    let doc_list: Vec<DocumentInfo> = docs.iter().filter_map(|node| {
-        let props = &node.properties;
-        Some(DocumentInfo {
-            document_id: props.get("document_id")?.as_str()?.to_string(),
-            name: props.get("name")?.as_str()?.to_string(),
-            chunk_count: props.get("chunk_count").and_then(|v| v.as_u64()).unwrap_or(0),
-        })
-    }).collect();
+    // 1. Get chunk IDs from Postgres before deleting
+    let chunk_ids = match state.metadata.get_document_chunk_ids(&document_id).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::error!("Failed to get chunk IDs for {}: {}", document_id, e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Failed to look up document chunks"}))).into_response();
+        }
+    };
     
-    Json(doc_list)
+    // 2. Delete chunks from BarqDB
+    for (chunk_id, _graph_node_id) in &chunk_ids {
+        if let Err(e) = state.vector_db.delete_document("sembra_chunks", *chunk_id as u64).await {
+            tracing::warn!("Failed to delete chunk {} from BarqDB: {}", chunk_id, e);
+        }
+    }
+    
+    // 3. Delete nodes from GraphDB
+    // Delete the document node itself
+    let doc_node_id = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        document_id.hash(&mut hasher);
+        hasher.finish()
+    };
+    if let Err(e) = state.graph_db.delete_node(doc_node_id).await {
+        tracing::warn!("Failed to delete Document node from GraphDB: {}", e);
+    }
+    // Delete chunk nodes
+    for (_chunk_id, graph_node_id) in &chunk_ids {
+        if let Some(gid) = graph_node_id {
+            if let Err(e) = state.graph_db.delete_node(*gid as u64).await {
+                tracing::warn!("Failed to delete Chunk node from GraphDB: {}", e);
+            }
+        }
+    }
+    
+    // 4. Delete from Postgres (cascades to document_chunks)
+    match state.metadata.delete_document(&document_id).await {
+        Ok(true) => {
+            info!("Deleted document {} ({} chunks)", document_id, chunk_ids.len());
+            (StatusCode::OK, Json(serde_json::json!({
+                "status": "deleted",
+                "document_id": document_id,
+                "chunks_removed": chunk_ids.len()
+            }))).into_response()
+        }
+        Ok(false) => {
+            (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Document not found"}))).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to delete document from Postgres: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Failed to delete document"}))).into_response()
+        }
+    }
 }
 
 pub async fn configure_embedding_handler(
@@ -406,6 +476,7 @@ pub fn create_router(state: Arc<RwLock<AppState>>) -> Router {
         .route("/v1/status", get(status_handler))
         .route("/v1/config", get(config_handler))
         .route("/v1/documents", get(documents_handler))
+        .route("/v1/documents/{document_id}", delete(delete_document_handler))
         .route("/v1/configure-embedding", post(configure_embedding_handler))
         .route("/v1/ingest", post(ingest_handler))
         .route("/v1/retrieve", post(retrieve_handler))

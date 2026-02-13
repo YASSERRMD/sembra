@@ -199,6 +199,24 @@ pub async fn upload_handler(
     
     info!("Stored {} chunks with graph relationships", chunk_count);
     
+    // Persist document metadata to Postgres for listing/deletion
+    if let Err(e) = state_guard.metadata.insert_document(
+        &document_id, &document_name, chunk_count as i32, total_chars as i32
+    ).await {
+        tracing::error!("Failed to insert document metadata into Postgres: {}", e);
+    }
+    
+    // Store chunk ID mappings for deletion
+    for chunk in &chunks {
+        let chunk_id_u64 = hash_to_u64(&chunk.chunk_id);
+        let graph_node_id = Some(chunk_id_u64);
+        if let Err(e) = state_guard.metadata.insert_document_chunk(
+            &document_id, chunk_id_u64, graph_node_id
+        ).await {
+            tracing::error!("Failed to insert chunk mapping: {}", e);
+        }
+    }
+    
     // Also publish to AiMesh queue for any additional background processing
     match sembra_core::aimesh::AiMeshConsumer::from_env().await {
         Ok(consumer) => {

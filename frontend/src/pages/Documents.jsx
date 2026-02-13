@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Upload as UploadIcon, FileText, X, CheckCircle, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
-import { uploadDocument, getDocuments } from '../lib/api';
+import { Upload as UploadIcon, FileText, X, CheckCircle, AlertCircle, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { uploadDocument, getDocuments, deleteDocument } from '../lib/api';
 
 export default function Documents() {
     const [files, setFiles] = useState([]);
@@ -11,6 +11,7 @@ export default function Documents() {
     const [chunkOverlap, setChunkOverlap] = useState(128);
     const [documents, setDocuments] = useState([]);
     const [loadingDocs, setLoadingDocs] = useState(true);
+    const [deletingId, setDeletingId] = useState(null);
 
     const fetchDocuments = useCallback(async () => {
         setLoadingDocs(true);
@@ -240,17 +241,48 @@ export default function Documents() {
                         ) : (
                             <div className="space-y-2">
                                 {documents.map((doc, i) => (
-                                    <div key={i} className="flex items-center justify-between p-4 rounded-lg border border-border">
-                                        <div className="flex items-center gap-3">
-                                            <FileText className="h-5 w-5 text-primary" />
-                                            <div>
-                                                <p className="text-sm font-medium">{doc.name}</p>
-                                                <p className="text-xs text-muted-foreground">ID: {doc.document_id}</p>
+                                    <div key={doc.document_id || i} className="flex items-center justify-between p-4 rounded-lg border border-border hover:border-primary/30 transition-colors">
+                                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                                            <FileText className="h-5 w-5 text-primary flex-shrink-0" />
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-medium truncate">{doc.name}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {doc.chunk_count} chunks · {doc.total_chars ? `${(doc.total_chars / 1000).toFixed(1)}k chars` : 'N/A'}
+                                                    {doc.created_at ? ` · ${new Date(doc.created_at).toLocaleDateString()}` : ''}
+                                                </p>
                                             </div>
                                         </div>
-                                        <span className="badge badge-secondary text-xs">
-                                            {doc.chunk_count} chunks
-                                        </span>
+                                        <div className="flex items-center gap-2 flex-shrink-0">
+                                            <span className={`badge text-xs ${doc.status === 'ready' ? 'badge-secondary' : 'badge-outline'
+                                                }`}>
+                                                {doc.status || 'ready'}
+                                            </span>
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm(`Delete "${doc.name}"? This will remove the document and all its chunks from all databases. This cannot be undone.`)) {
+                                                        setDeletingId(doc.document_id);
+                                                        deleteDocument(doc.document_id)
+                                                            .then(() => {
+                                                                fetchDocuments();
+                                                            })
+                                                            .catch((err) => {
+                                                                console.error('Delete failed:', err);
+                                                                alert('Failed to delete document: ' + (err.response?.data?.error || err.message));
+                                                            })
+                                                            .finally(() => setDeletingId(null));
+                                                    }
+                                                }}
+                                                disabled={deletingId === doc.document_id}
+                                                className="btn btn-outline btn-sm text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                                                title="Delete document"
+                                            >
+                                                {deletingId === doc.document_id ? (
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <Trash2 className="h-4 w-4" />
+                                                )}
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>

@@ -27,6 +27,9 @@ export const uploadDocument = (formData) =>
 // Get document list
 export const getDocuments = () => api.get('/v1/documents');
 
+// Delete a document
+export const deleteDocument = (documentId) => api.delete(`/v1/documents/${encodeURIComponent(documentId)}`);
+
 // Ask (RAG)
 export const ask = (query, includeGraph = false) =>
     api.post('/v1/ask', { query, include_graph: includeGraph });
